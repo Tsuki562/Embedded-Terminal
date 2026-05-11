@@ -1,0 +1,17 @@
+{
+  "idf.currentSetup": "D:\\espidf\\v5.5.3\\esp-idf",
+  "idf.openOcdConfigs": [
+    "board/esp32p4-builtin.cfg"
+  ],
+  "idf.flashType": "UART",
+  "idf.portWin": "COM6",
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32p4"
+  },
+  "clangd.path": "C:\\Espressif\\tools\\esp-clang\\esp-19.1.2_20250312\\esp-clang\\bin\\clangd.exe",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=f:\\txt\\esp-dev-kits-master\\esp-dev-kits-master\\examples\\esp32-p4-function-ev-board\\examples\\esp_brookesia_phone\\build"
+  ]
+}

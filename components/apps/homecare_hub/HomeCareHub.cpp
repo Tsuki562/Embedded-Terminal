@@ -24,6 +24,8 @@ LV_FONT_DECLARE(homecare_font_simsun_28);
 #define HUB_FONT_HEAD          (&homecare_font_simsun_20)
 #define HUB_FONT_BODY          (&homecare_font_simsun_16)
 #define HUB_FONT_SMALL         (&homecare_font_simsun_14)
+#define HUB_PAGE_COUNT         (3)
+#define HUB_PAGE_GAP           (14)
 
 HomeCareHub::HomeCareHub():
     ESP_Brookesia_PhoneApp("家庭终端", &img_app_setting, true),
@@ -33,6 +35,8 @@ HomeCareHub::HomeCareHub():
     _height(600),
     _privacy_enabled(true),
     _root(nullptr),
+    _pages(nullptr),
+    _page_dots({}),
     _mode_label(nullptr),
     _status_label(nullptr),
     _privacy_label(nullptr),
@@ -106,6 +110,8 @@ bool HomeCareHub::close(void)
         lv_obj_del(_root);
         _root = nullptr;
     }
+    _pages = nullptr;
+    _page_dots.fill(nullptr);
     return true;
 }
 
@@ -147,6 +153,25 @@ void HomeCareHub::setCardAccent(lv_obj_t *obj, lv_color_t color)
     lv_obj_set_style_border_color(obj, color, 0);
 }
 
+void HomeCareHub::updatePageIndicator(int page)
+{
+    if (page < 0) {
+        page = 0;
+    } else if (page >= HUB_PAGE_COUNT) {
+        page = HUB_PAGE_COUNT - 1;
+    }
+
+    for (int i = 0; i < HUB_PAGE_COUNT; ++i) {
+        if (_page_dots[i] == nullptr) {
+            continue;
+        }
+        const bool active = (i == page);
+        lv_obj_set_size(_page_dots[i], active ? 22 : 8, 8);
+        lv_obj_set_style_bg_color(_page_dots[i], active ? HUB_BLUE_COLOR : lv_color_hex(0x4B5563), 0);
+        lv_obj_set_style_bg_opa(_page_dots[i], active ? LV_OPA_COVER : LV_OPA_70, 0);
+    }
+}
+
 bool HomeCareHub::createUi(void)
 {
     _root = lv_obj_create(lv_scr_act());
@@ -179,32 +204,66 @@ bool HomeCareHub::createUi(void)
     lv_obj_align(_privacy_label, LV_ALIGN_RIGHT_MID, 0, 0);
 
     const int content_y = 72;
-    const int content_h = _height - 190;
-    const int left_w = 300;
-    const int center_w = 390;
-    const int right_w = _width - left_w - center_w - 70;
+    const int page_w = _width - 28;
+    const int page_h = _height - content_y - 44;
 
-    lv_obj_t *left = createPanel(_root, left_w, content_h, HUB_PANEL_COLOR);
-    lv_obj_align(left, LV_ALIGN_TOP_LEFT, 0, content_y);
+    _pages = lv_obj_create(_root);
+    lv_obj_set_size(_pages, page_w, page_h);
+    lv_obj_align(_pages, LV_ALIGN_TOP_MID, 0, content_y);
+    lv_obj_set_style_bg_opa(_pages, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_pages, 0, 0);
+    lv_obj_set_style_radius(_pages, 0, 0);
+    lv_obj_set_style_pad_all(_pages, 0, 0);
+    lv_obj_set_style_pad_column(_pages, HUB_PAGE_GAP, 0);
+    lv_obj_set_scrollbar_mode(_pages, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_dir(_pages, LV_DIR_HOR);
+    lv_obj_set_scroll_snap_x(_pages, LV_SCROLL_SNAP_CENTER);
+    lv_obj_add_flag(_pages, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_ONE);
+    lv_obj_clear_flag(_pages, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_set_flex_flow(_pages, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(_pages, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_add_event_cb(_pages, scrollEventCb, LV_EVENT_SCROLL_END, this);
+
+    std::array<lv_obj_t *, HUB_PAGE_COUNT> page_objs = {};
+    for (int i = 0; i < HUB_PAGE_COUNT; ++i) {
+        lv_obj_t *page = lv_obj_create(_pages);
+        lv_obj_set_size(page, page_w, page_h);
+        lv_obj_set_style_bg_opa(page, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(page, 0, 0);
+        lv_obj_set_style_radius(page, 0, 0);
+        lv_obj_set_style_pad_all(page, 0, 0);
+        lv_obj_add_flag(page, LV_OBJ_FLAG_SNAPPABLE);
+        lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
+        page_objs[i] = page;
+    }
+
+    lv_obj_t *left = createPanel(page_objs[0], page_w, page_h, HUB_PANEL_COLOR);
+    lv_obj_align(left, LV_ALIGN_TOP_LEFT, 0, 0);
     createLabel(left, "居家区域", HUB_FONT_HEAD, HUB_TEXT_COLOR);
 
     const char *room_names[] = {"客厅", "卧室", "浴室", "走廊"};
+    const int room_gap = 16;
+    const int room_card_w = (page_w - 24 - room_gap) / 2;
+    const int room_card_h = (page_h - 78 - room_gap) / 2;
     for (int i = 0; i < 4; ++i) {
-        lv_obj_t *card = createPanel(left, left_w - 24, 72, HUB_PANEL_2_COLOR);
-        lv_obj_align(card, LV_ALIGN_TOP_LEFT, 0, 38 + i * 82);
+        lv_obj_t *card = createPanel(left, room_card_w, room_card_h, HUB_PANEL_2_COLOR);
+        lv_obj_align(card, LV_ALIGN_TOP_LEFT,
+                     (i % 2) * (room_card_w + room_gap),
+                     44 + (i / 2) * (room_card_h + room_gap));
         _room_cards[i] = card;
         _room_name_labels[i] = createLabel(card, room_names[i], HUB_FONT_BODY, HUB_TEXT_COLOR);
         lv_obj_align(_room_name_labels[i], LV_ALIGN_TOP_LEFT, 0, 0);
         _room_activity_labels[i] = createLabel(card, "空闲", HUB_FONT_SMALL, HUB_MUTED_COLOR);
-        lv_obj_align(_room_activity_labels[i], LV_ALIGN_TOP_LEFT, 0, 26);
+        lv_obj_set_width(_room_activity_labels[i], room_card_w - 28);
+        lv_obj_align(_room_activity_labels[i], LV_ALIGN_TOP_LEFT, 0, 42);
         _room_risk_labels[i] = createLabel(card, "风险 L0", HUB_FONT_SMALL, HUB_GREEN_COLOR);
         lv_obj_align(_room_risk_labels[i], LV_ALIGN_TOP_RIGHT, 0, 0);
         _room_csi_labels[i] = createLabel(card, "CSI 20%", HUB_FONT_SMALL, HUB_MUTED_COLOR);
         lv_obj_align(_room_csi_labels[i], LV_ALIGN_BOTTOM_RIGHT, 0, 0);
     }
 
-    lv_obj_t *center = createPanel(_root, center_w, content_h, HUB_PANEL_COLOR);
-    lv_obj_align_to(center, left, LV_ALIGN_OUT_RIGHT_TOP, 14, 0);
+    lv_obj_t *center = createPanel(page_objs[1], page_w, page_h, HUB_PANEL_COLOR);
+    lv_obj_align(center, LV_ALIGN_TOP_LEFT, 0, 0);
     createLabel(center, "巡检小车", HUB_FONT_HEAD, HUB_TEXT_COLOR);
 
     _car_status_label = createLabel(center, "待命中", HUB_FONT_TITLE, HUB_GREEN_COLOR);
@@ -219,7 +278,7 @@ bool HomeCareHub::createUi(void)
     lv_obj_t *battery_title = createLabel(center, "电量", HUB_FONT_SMALL, HUB_MUTED_COLOR);
     lv_obj_align(battery_title, LV_ALIGN_TOP_LEFT, 0, 176);
     _battery_bar = lv_bar_create(center);
-    lv_obj_set_size(_battery_bar, center_w - 110, 14);
+    lv_obj_set_size(_battery_bar, page_w - 150, 14);
     lv_obj_align(_battery_bar, LV_ALIGN_TOP_LEFT, 0, 198);
     lv_bar_set_range(_battery_bar, 0, 100);
     lv_obj_set_style_bg_color(_battery_bar, lv_color_hex(0x334155), LV_PART_MAIN);
@@ -230,7 +289,7 @@ bool HomeCareHub::createUi(void)
     lv_obj_t *route_title = createLabel(center, "路线", HUB_FONT_SMALL, HUB_MUTED_COLOR);
     lv_obj_align(route_title, LV_ALIGN_TOP_LEFT, 0, 228);
     _route_bar = lv_bar_create(center);
-    lv_obj_set_size(_route_bar, center_w - 110, 14);
+    lv_obj_set_size(_route_bar, page_w - 150, 14);
     lv_obj_align(_route_bar, LV_ALIGN_TOP_LEFT, 0, 250);
     lv_bar_set_range(_route_bar, 0, 100);
     lv_obj_set_style_bg_color(_route_bar, lv_color_hex(0x334155), LV_PART_MAIN);
@@ -245,51 +304,8 @@ bool HomeCareHub::createUi(void)
     _voice_label = createLabel(center, "语音：待命", HUB_FONT_BODY, HUB_TEXT_COLOR);
     lv_obj_align(_voice_label, LV_ALIGN_TOP_LEFT, 0, 374);
 
-    lv_obj_t *right = createPanel(_root, right_w, content_h, HUB_PANEL_COLOR);
-    lv_obj_align_to(right, center, LV_ALIGN_OUT_RIGHT_TOP, 14, 0);
-    createLabel(right, "天气", HUB_FONT_HEAD, HUB_TEXT_COLOR);
-    _weather_label = createLabel(right, "多云", HUB_FONT_TITLE, HUB_BLUE_COLOR);
-    lv_obj_align(_weather_label, LV_ALIGN_TOP_LEFT, 0, 42);
-    _outdoor_label = createLabel(right, "室外 24C", HUB_FONT_BODY, HUB_TEXT_COLOR);
-    lv_obj_align(_outdoor_label, LV_ALIGN_TOP_LEFT, 0, 92);
-    _humidity_label = createLabel(right, "湿度 58%", HUB_FONT_BODY, HUB_TEXT_COLOR);
-    lv_obj_align(_humidity_label, LV_ALIGN_TOP_LEFT, 0, 126);
-    _air_label = createLabel(right, "空气 良好", HUB_FONT_BODY, HUB_GREEN_COLOR);
-    lv_obj_align(_air_label, LV_ALIGN_TOP_LEFT, 0, 160);
-
-    lv_obj_t *divider = lv_obj_create(right);
-    lv_obj_set_size(divider, right_w - 26, 1);
-    lv_obj_align(divider, LV_ALIGN_TOP_LEFT, 0, 214);
-    lv_obj_set_style_bg_color(divider, lv_color_hex(0x334155), 0);
-    lv_obj_set_style_border_width(divider, 0, 0);
-    lv_obj_clear_flag(divider, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *env_title = createLabel(right, "室内环境", HUB_FONT_HEAD, HUB_TEXT_COLOR);
-    lv_obj_align(env_title, LV_ALIGN_TOP_LEFT, 0, 226);
-    _indoor_label = createLabel(right, "室内 25C / 51%", HUB_FONT_BODY, HUB_TEXT_COLOR);
-    lv_obj_align(_indoor_label, LV_ALIGN_TOP_LEFT, 0, 254);
-    _night_label = createLabel(right, "夜间风险低", HUB_FONT_BODY, HUB_MUTED_COLOR);
-    lv_obj_set_width(_night_label, right_w - 28);
-    lv_obj_align(_night_label, LV_ALIGN_TOP_LEFT, 0, 294);
-
-    lv_obj_t *bottom = createPanel(_root, _width - 28, 92, HUB_PANEL_COLOR);
-    lv_obj_align(bottom, LV_ALIGN_BOTTOM_MID, 0, 0);
-
-    for (int i = 0; i < 4; ++i) {
-        lv_obj_t *event = createPanel(bottom, (_width - 94) / 4, 66, HUB_PANEL_2_COLOR);
-        lv_obj_align(event, LV_ALIGN_LEFT_MID, i * ((_width - 94) / 4 + 12), 0);
-        _event_cards[i] = event;
-        _event_level_labels[i] = createLabel(event, "L0", HUB_FONT_SMALL, HUB_GREEN_COLOR);
-        lv_obj_align(_event_level_labels[i], LV_ALIGN_TOP_LEFT, 0, 0);
-        _event_time_labels[i] = createLabel(event, "08:30", HUB_FONT_SMALL, HUB_MUTED_COLOR);
-        lv_obj_align(_event_time_labels[i], LV_ALIGN_TOP_RIGHT, 0, 0);
-        _event_text_labels[i] = createLabel(event, "正常巡检", HUB_FONT_SMALL, HUB_TEXT_COLOR);
-        lv_obj_set_width(_event_text_labels[i], ((_width - 94) / 4) - 30);
-        lv_obj_align(_event_text_labels[i], LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    }
-
     lv_obj_t *actions = lv_obj_create(center);
-    lv_obj_set_size(actions, center_w - 24, 42);
+    lv_obj_set_size(actions, page_w - 24, 42);
     lv_obj_align(actions, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_opa(actions, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(actions, 0, 0);
@@ -301,7 +317,7 @@ bool HomeCareHub::createUi(void)
     const char *button_texts[] = {"巡检", "回充", "隐私", "呼叫"};
     for (int i = 0; i < 4; ++i) {
         lv_obj_t *btn = lv_btn_create(actions);
-        lv_obj_set_size(btn, 82, 38);
+        lv_obj_set_size(btn, 120, 38);
         lv_obj_set_style_radius(btn, 6, 0);
         lv_obj_set_style_bg_color(btn, i == 2 ? HUB_PURPLE_COLOR : HUB_BLUE_COLOR, 0);
         lv_obj_add_event_cb(btn, actionEventCb, LV_EVENT_CLICKED, this);
@@ -310,20 +326,65 @@ bool HomeCareHub::createUi(void)
         lv_obj_center(label);
     }
 
+    lv_obj_t *right = createPanel(page_objs[2], page_w, page_h, HUB_PANEL_COLOR);
+    lv_obj_align(right, LV_ALIGN_TOP_LEFT, 0, 0);
+    const int info_gap = 16;
+    const int info_w = (page_w - 24 - info_gap) / 2;
+
+    lv_obj_t *weather = createPanel(right, info_w, 166, HUB_PANEL_2_COLOR);
+    lv_obj_align(weather, LV_ALIGN_TOP_LEFT, 0, 0);
+    createLabel(weather, "天气", HUB_FONT_HEAD, HUB_TEXT_COLOR);
+    _weather_label = createLabel(weather, "多云", HUB_FONT_TITLE, HUB_BLUE_COLOR);
+    lv_obj_align(_weather_label, LV_ALIGN_TOP_LEFT, 0, 42);
+    _outdoor_label = createLabel(weather, "室外 24C", HUB_FONT_BODY, HUB_TEXT_COLOR);
+    lv_obj_align(_outdoor_label, LV_ALIGN_TOP_LEFT, 0, 92);
+    _humidity_label = createLabel(weather, "湿度 58%", HUB_FONT_BODY, HUB_TEXT_COLOR);
+    lv_obj_align(_humidity_label, LV_ALIGN_TOP_LEFT, 170, 92);
+    _air_label = createLabel(weather, "空气 良好", HUB_FONT_BODY, HUB_GREEN_COLOR);
+    lv_obj_align(_air_label, LV_ALIGN_TOP_LEFT, 0, 126);
+
+    lv_obj_t *env = createPanel(right, info_w, 166, HUB_PANEL_2_COLOR);
+    lv_obj_align_to(env, weather, LV_ALIGN_OUT_RIGHT_TOP, info_gap, 0);
+    createLabel(env, "室内环境", HUB_FONT_HEAD, HUB_TEXT_COLOR);
+    _indoor_label = createLabel(env, "室内 25C / 51%", HUB_FONT_BODY, HUB_TEXT_COLOR);
+    lv_obj_align(_indoor_label, LV_ALIGN_TOP_LEFT, 0, 52);
+    _night_label = createLabel(env, "夜间风险低", HUB_FONT_BODY, HUB_MUTED_COLOR);
+    lv_obj_set_width(_night_label, info_w - 28);
+    lv_obj_align(_night_label, LV_ALIGN_TOP_LEFT, 0, 92);
+
+    lv_obj_t *event_title = createLabel(right, "事件记录", HUB_FONT_HEAD, HUB_TEXT_COLOR);
+    lv_obj_align(event_title, LV_ALIGN_TOP_LEFT, 0, 196);
+
+    const int event_gap = 10;
+    const int event_w = page_w - 24;
+    const int event_h = (page_h - 284 - event_gap * 3) / 4;
+    for (int i = 0; i < 4; ++i) {
+        lv_obj_t *event = createPanel(right, event_w, event_h, HUB_PANEL_2_COLOR);
+        lv_obj_align(event, LV_ALIGN_TOP_LEFT, 0, 232 + i * (event_h + event_gap));
+        _event_cards[i] = event;
+        _event_level_labels[i] = createLabel(event, "L0", HUB_FONT_SMALL, HUB_GREEN_COLOR);
+        lv_obj_align(_event_level_labels[i], LV_ALIGN_TOP_LEFT, 0, 0);
+        _event_time_labels[i] = createLabel(event, "08:30", HUB_FONT_SMALL, HUB_MUTED_COLOR);
+        lv_obj_align(_event_time_labels[i], LV_ALIGN_TOP_RIGHT, 0, 0);
+        _event_text_labels[i] = createLabel(event, "正常巡检", HUB_FONT_SMALL, HUB_TEXT_COLOR);
+        lv_obj_set_width(_event_text_labels[i], event_w - 30);
+        lv_obj_align(_event_text_labels[i], LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    }
+
     lv_obj_t *modes = lv_obj_create(right);
-    lv_obj_set_size(modes, right_w - 24, 86);
+    lv_obj_set_size(modes, page_w - 24, 42);
     lv_obj_align(modes, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_opa(modes, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(modes, 0, 0);
     lv_obj_set_style_pad_all(modes, 0, 0);
-    lv_obj_set_flex_flow(modes, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_flow(modes, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(modes, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(modes, LV_OBJ_FLAG_SCROLLABLE);
 
     const char *mode_texts[] = {"正常", "跌倒", "浴室", "夜间"};
     for (int i = 0; i < MODE_MAX; ++i) {
         lv_obj_t *btn = lv_btn_create(modes);
-        lv_obj_set_size(btn, (right_w - 40) / 2, 36);
+        lv_obj_set_size(btn, 120, 36);
         lv_obj_set_style_radius(btn, 6, 0);
         lv_obj_set_style_bg_color(btn, HUB_PANEL_2_COLOR, 0);
         lv_obj_set_style_border_width(btn, 1, 0);
@@ -333,6 +394,27 @@ bool HomeCareHub::createUi(void)
         lv_obj_t *label = createLabel(btn, mode_texts[i], HUB_FONT_SMALL, HUB_TEXT_COLOR);
         lv_obj_center(label);
     }
+
+    lv_obj_t *dots = lv_obj_create(_root);
+    lv_obj_set_size(dots, 86, 14);
+    lv_obj_align(dots, LV_ALIGN_BOTTOM_MID, 0, -6);
+    lv_obj_set_style_bg_opa(dots, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(dots, 0, 0);
+    lv_obj_set_style_pad_all(dots, 0, 0);
+    lv_obj_set_flex_flow(dots, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(dots, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(dots, LV_OBJ_FLAG_SCROLLABLE);
+
+    for (int i = 0; i < HUB_PAGE_COUNT; ++i) {
+        lv_obj_t *dot = lv_obj_create(dots);
+        lv_obj_set_size(dot, 8, 8);
+        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(dot, 0, 0);
+        lv_obj_set_style_pad_all(dot, 0, 0);
+        lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+        _page_dots[i] = dot;
+    }
+    updatePageIndicator(0);
 
     return true;
 }
@@ -499,6 +581,23 @@ void HomeCareHub::actionEventCb(lv_event_t *e)
         app->_privacy_enabled = !app->_privacy_enabled;
         app->updateUi();
     }
+}
+
+void HomeCareHub::scrollEventCb(lv_event_t *e)
+{
+    HomeCareHub *app = static_cast<HomeCareHub *>(lv_event_get_user_data(e));
+    if (app == nullptr || app->_pages == nullptr) {
+        return;
+    }
+
+    const int page_w = app->_width - 28;
+    const int stride = page_w + HUB_PAGE_GAP;
+    if (stride <= 0) {
+        return;
+    }
+
+    int page = (lv_obj_get_scroll_x(app->_pages) + stride / 2) / stride;
+    app->updatePageIndicator(page);
 }
 
 void HomeCareHub::timerCb(lv_timer_t *timer)

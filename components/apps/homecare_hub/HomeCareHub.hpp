@@ -67,6 +67,7 @@ private:
     void setMode(DemoMode mode);
     void updateUi(void);
     void deleteTimer(void);
+    void updatePageIndicator(int page);
 
     lv_obj_t *createPanel(lv_obj_t *parent, int32_t width, int32_t height, lv_color_t bg);
     lv_obj_t *createLabel(lv_obj_t *parent, const char *text, const lv_font_t *font, lv_color_t color);
@@ -74,6 +75,7 @@ private:
 
     static void scenarioEventCb(lv_event_t *e);
     static void actionEventCb(lv_event_t *e);
+    static void scrollEventCb(lv_event_t *e);
     static void timerCb(lv_timer_t *timer);
 
     DemoMode _mode;
@@ -83,6 +85,8 @@ private:
     bool _privacy_enabled;
 
     lv_obj_t *_root;
+    lv_obj_t *_pages;
+    std::array<lv_obj_t *, 3> _page_dots;
     lv_obj_t *_mode_label;
     lv_obj_t *_status_label;
     lv_obj_t *_privacy_label;

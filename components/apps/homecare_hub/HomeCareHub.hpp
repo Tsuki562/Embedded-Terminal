@@ -55,7 +55,7 @@ private:
         const char *car_target;
         const char *car_phase;
         const char *obstacle;
-        const char *camera;
+        const char *sensor;
         const char *voice;
         int battery;
         int route_progress;
@@ -101,7 +101,7 @@ private:
     lv_obj_t *_car_target_label;
     lv_obj_t *_car_phase_label;
     lv_obj_t *_obstacle_label;
-    lv_obj_t *_camera_label;
+    lv_obj_t *_sensor_label;
     lv_obj_t *_voice_label;
     lv_obj_t *_battery_bar;
     lv_obj_t *_battery_label;

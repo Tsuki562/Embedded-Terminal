@@ -51,7 +51,7 @@ HomeCareHub::HomeCareHub():
     _car_target_label(nullptr),
     _car_phase_label(nullptr),
     _obstacle_label(nullptr),
-    _camera_label(nullptr),
+    _sensor_label(nullptr),
     _voice_label(nullptr),
     _battery_bar(nullptr),
     _battery_label(nullptr),
@@ -200,7 +200,7 @@ bool HomeCareHub::createUi(void)
     lv_obj_align(_mode_label, LV_ALIGN_RIGHT_MID, -360, -8);
     _status_label = createLabel(top, "WiFi-CSI 在线 | 本地 AI 就绪", HUB_FONT_SMALL, HUB_MUTED_COLOR);
     lv_obj_align_to(_status_label, _mode_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
-    _privacy_label = createLabel(top, "隐私：摄像头关闭", HUB_FONT_BODY, HUB_GREEN_COLOR);
+    _privacy_label = createLabel(top, "隐私：仅 CSI 感知", HUB_FONT_BODY, HUB_GREEN_COLOR);
     lv_obj_align(_privacy_label, LV_ALIGN_RIGHT_MID, 0, 0);
 
     const int content_y = 72;
@@ -299,8 +299,8 @@ bool HomeCareHub::createUi(void)
 
     _obstacle_label = createLabel(center, "障碍：通畅", HUB_FONT_BODY, HUB_TEXT_COLOR);
     lv_obj_align(_obstacle_label, LV_ALIGN_TOP_LEFT, 0, 314);
-    _camera_label = createLabel(center, "摄像头：关闭", HUB_FONT_BODY, HUB_TEXT_COLOR);
-    lv_obj_align(_camera_label, LV_ALIGN_TOP_LEFT, 0, 344);
+    _sensor_label = createLabel(center, "传感器：CSI 在线", HUB_FONT_BODY, HUB_TEXT_COLOR);
+    lv_obj_align(_sensor_label, LV_ALIGN_TOP_LEFT, 0, 344);
     _voice_label = createLabel(center, "语音：待命", HUB_FONT_BODY, HUB_TEXT_COLOR);
     lv_obj_align(_voice_label, LV_ALIGN_TOP_LEFT, 0, 374);
 
@@ -429,9 +429,9 @@ void HomeCareHub::updateUi(void)
 {
     const DashboardState states[MODE_MAX] = {
         {
-            "正常巡检", "WiFi-CSI 在线 | 本地 AI 就绪", "隐私：摄像头关闭",
+            "正常巡检", "WiFi-CSI 在线 | 本地 AI 就绪", "隐私：仅 CSI 感知",
             "多云", "室外 24C", "湿度 58%", "空气 良好", "室内 25C / 51%", "夜间风险低",
-            "待命中", "充电桩", "客厅巡检点", "CSI 看护", "障碍：通畅", "摄像头：关闭", "语音：待命",
+            "待命中", "充电桩", "客厅巡检点", "CSI 看护", "障碍：通畅", "传感器：CSI 在线", "语音：待命",
             86, 12,
             {{
                 {"客厅", "有人且稳定", "风险 L0", 31, true, false, HUB_GREEN_COLOR},
@@ -441,15 +441,15 @@ void HomeCareHub::updateUi(void)
             }},
             {{
                 {"L0", "08:30", "日常巡检完成", HUB_GREEN_COLOR},
-                {"L0", "08:18", "摄像头保持关闭", HUB_GREEN_COLOR},
+                {"L0", "08:18", "仅 CSI 感知", HUB_GREEN_COLOR},
                 {"L1", "07:42", "卧室轻微活动", HUB_BLUE_COLOR},
                 {"L0", "07:20", "小车已回充", HUB_GREEN_COLOR},
             }},
         },
         {
-            "疑似跌倒", "CSI 高动态 | 小车出发", "隐私：事件确认",
+            "疑似跌倒", "CSI 高动态 | 小车出发", "隐私：仅用 CSI 确认",
             "多云", "室外 24C", "湿度 58%", "空气 良好", "室内 25C / 51%", "优先确认客厅",
-            "前往现场", "走廊", "客厅巡检点", "视觉确认", "障碍：已绕行", "摄像头：本地 AI 开启", "语音：询问用户",
+            "前往现场", "走廊", "客厅巡检点", "CSI 复核", "障碍：已绕行", "传感器：CSI 增强", "语音：询问用户",
             78, 74,
             {{
                 {"客厅", "高动态后静止", "风险 L3", 88, true, false, HUB_RED_COLOR},
@@ -458,16 +458,16 @@ void HomeCareHub::updateUi(void)
                 {"走廊", "小车经过", "风险 L1", 45, true, false, HUB_BLUE_COLOR},
             }},
             {{
-                {"L3", "22:31", "视觉确认疑似跌倒", HUB_RED_COLOR},
+                {"L3", "22:31", "CSI 复核疑似跌倒", HUB_RED_COLOR},
                 {"L2", "22:30", "小车前往客厅", HUB_ORANGE_COLOR},
                 {"L2", "22:30", "CSI 疑似跌倒", HUB_ORANGE_COLOR},
                 {"L0", "22:15", "夜间巡检待命", HUB_GREEN_COLOR},
             }},
         },
         {
-            "浴室久留", "CSI 久留计时 | 门区保护", "隐私：浴室保护",
+            "浴室久留", "CSI 久留计时 | 门区保护", "隐私：浴室无图像",
             "小雨", "室外 22C", "湿度 76%", "空气 良好", "室内 24C / 55%", "超时前先观察",
-            "门外等待", "浴室门口", "浴室门口", "语音询问", "障碍：通畅", "摄像头：仅门区", "语音：轻声询问",
+            "门外等待", "浴室门口", "浴室门口", "语音询问", "障碍：通畅", "传感器：门区 CSI", "语音：轻声询问",
             72, 100,
             {{
                 {"客厅", "安静", "风险 L0", 15, false, false, HUB_GREEN_COLOR},
@@ -479,13 +479,13 @@ void HomeCareHub::updateUi(void)
                 {"L2", "21:08", "浴室久留超时", HUB_ORANGE_COLOR},
                 {"L2", "21:07", "小车门外等待", HUB_ORANGE_COLOR},
                 {"L1", "21:02", "进入浴室区", HUB_BLUE_COLOR},
-                {"L0", "20:55", "隐私区摄像头关闭", HUB_GREEN_COLOR},
+                {"L0", "20:55", "隐私区无图像采集", HUB_GREEN_COLOR},
             }},
         },
         {
-            "夜间离床", "CSI 离床 | 低速跟随", "隐私：摄像头关闭",
+            "夜间离床", "CSI 离床 | 低速跟随", "隐私：仅 CSI 感知",
             "晴夜", "室外 19C", "湿度 62%", "空气 优秀", "室内 23C / 49%", "引导灯并看护走廊",
-            "低速跟随", "卧室门口", "走廊点位", "夜间陪护", "障碍：通畅", "摄像头：关闭", "语音：待命",
+            "低速跟随", "卧室门口", "走廊点位", "夜间陪护", "障碍：通畅", "传感器：CSI 在线", "语音：待命",
             81, 46,
             {{
                 {"客厅", "无活动", "风险 L0", 18, false, false, HUB_GREEN_COLOR},
@@ -506,7 +506,7 @@ void HomeCareHub::updateUi(void)
     lv_label_set_text(_mode_label, state.mode_name);
     lv_obj_set_style_text_color(_mode_label, _mode == MODE_FALL ? HUB_RED_COLOR : (_mode == MODE_BATHROOM ? HUB_ORANGE_COLOR : HUB_GREEN_COLOR), 0);
     lv_label_set_text(_status_label, state.home_status);
-    lv_label_set_text(_privacy_label, _privacy_enabled ? state.privacy : "隐私：手动允许摄像头");
+    lv_label_set_text(_privacy_label, _privacy_enabled ? state.privacy : "隐私：手动巡检模式");
     lv_obj_set_style_text_color(_privacy_label, _privacy_enabled ? HUB_GREEN_COLOR : HUB_YELLOW_COLOR, 0);
 
     lv_label_set_text(_weather_label, state.weather);
@@ -522,7 +522,7 @@ void HomeCareHub::updateUi(void)
     lv_label_set_text_fmt(_car_target_label, "目标：%s", state.car_target);
     lv_label_set_text_fmt(_car_phase_label, "阶段：%s", state.car_phase);
     lv_label_set_text(_obstacle_label, state.obstacle);
-    lv_label_set_text(_camera_label, state.camera);
+    lv_label_set_text(_sensor_label, state.sensor);
     lv_label_set_text(_voice_label, state.voice);
     lv_bar_set_value(_battery_bar, state.battery, LV_ANIM_ON);
     lv_label_set_text_fmt(_battery_label, "%d%%", state.battery);

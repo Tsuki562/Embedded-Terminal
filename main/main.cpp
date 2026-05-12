@@ -95,9 +95,5 @@ extern "C" void app_main(void)
     assert(app_settings != nullptr && "Failed to create app_settings");
     assert((phone->installApp(app_settings) >= 0) && "Failed to begin app_settings");
 
-    Camera *camera = new Camera(1280, 720);
-    assert(camera != nullptr && "Failed to create camera");
-    assert((phone->installApp(camera) >= 0) && "Failed to begin camera");
-
     esp_lv_adapter_unlock();
 }

@@ -82,7 +82,8 @@ Camera::Camera(uint16_t hor_res, uint16_t ver_res):
     _img_album_dsc_size(hor_res > ver_res ? ver_res : hor_res),
     _img_album_buffer(NULL),
     _camera_init_sem(NULL),
-    _camera_ctlr_handle(0)
+    _camera_ctlr_handle(0),
+    _is_streaming(false)
 {
     _img_album_buf_bytes = _img_album_dsc_size * _img_album_dsc_size * sizeof(lv_color_t);
 }
@@ -102,6 +103,7 @@ bool Camera::run(void)
             ESP_LOGE(TAG, "Camera init timeout");
             return false;
         }
+        _is_streaming = true;
         free(_camera_init_sem);
         _camera_init_sem = NULL;
     }
@@ -206,6 +208,12 @@ bool Camera::run(void)
 
 bool Camera::pause(void)
 {
+    xEventGroupSetBits(camera_event_group, CAMERA_EVENT_TASK_RUN);
+    if (_is_streaming) {
+        app_video_stream_task_stop(_camera_ctlr_handle);
+        app_video_stream_wait_stop();
+        _is_streaming = false;
+    }
     xEventGroupClearBits(camera_event_group, CAMERA_EVENT_TASK_RUN);
 
     return true;
@@ -213,6 +221,10 @@ bool Camera::pause(void)
 
 bool Camera::resume(void)
 {
+    if (!_is_streaming) {
+        ESP_ERROR_CHECK(app_video_stream_task_start(_camera_ctlr_handle, 0));
+        _is_streaming = true;
+    }
     xEventGroupSetBits(camera_event_group, CAMERA_EVENT_TASK_RUN);
 
     return true;
@@ -232,8 +244,11 @@ bool Camera::close(void)
     xEventGroupClearBits(camera_event_group, CAMERA_EVENT_PED_DETECT);
     xEventGroupClearBits(camera_event_group, CAMERA_EVENT_HUMAN_DETECT);
 
-    app_video_stream_task_stop(_camera_ctlr_handle);
-    app_video_stream_wait_stop();
+    if (_is_streaming) {
+        app_video_stream_task_stop(_camera_ctlr_handle);
+        app_video_stream_wait_stop();
+        _is_streaming = false;
+    }
 
     if (_img_album_buffer) {
         heap_caps_free(_img_album_buffer);

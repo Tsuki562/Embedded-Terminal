@@ -3,6 +3,10 @@
 #include "HomeCareHub.hpp"
 
 LV_IMG_DECLARE(img_app_setting);
+LV_FONT_DECLARE(homecare_font_simsun_14);
+LV_FONT_DECLARE(homecare_font_simsun_16);
+LV_FONT_DECLARE(homecare_font_simsun_20);
+LV_FONT_DECLARE(homecare_font_simsun_28);
 
 #define HUB_BG_COLOR           lv_color_hex(0x101722)
 #define HUB_PANEL_COLOR        lv_color_hex(0x182231)
@@ -16,13 +20,13 @@ LV_IMG_DECLARE(img_app_setting);
 #define HUB_RED_COLOR          lv_color_hex(0xEF4444)
 #define HUB_PURPLE_COLOR       lv_color_hex(0xA78BFA)
 
-#define HUB_FONT_TITLE         (&lv_font_montserrat_28)
-#define HUB_FONT_HEAD          (&lv_font_montserrat_20)
-#define HUB_FONT_BODY          (&lv_font_montserrat_16)
-#define HUB_FONT_SMALL         (&lv_font_montserrat_14)
+#define HUB_FONT_TITLE         (&homecare_font_simsun_28)
+#define HUB_FONT_HEAD          (&homecare_font_simsun_20)
+#define HUB_FONT_BODY          (&homecare_font_simsun_16)
+#define HUB_FONT_SMALL         (&homecare_font_simsun_14)
 
 HomeCareHub::HomeCareHub():
-    ESP_Brookesia_PhoneApp("HomeCare Hub", &img_app_setting, true),
+    ESP_Brookesia_PhoneApp("家庭终端", &img_app_setting, true),
     _mode(MODE_NORMAL),
     _timer(nullptr),
     _width(1024),
@@ -162,16 +166,16 @@ bool HomeCareHub::createUi(void)
     lv_obj_set_style_pad_all(top, 0, 0);
     lv_obj_clear_flag(top, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *title = createLabel(top, "HomeCare Hub", HUB_FONT_TITLE, HUB_TEXT_COLOR);
+    lv_obj_t *title = createLabel(top, "家庭终端", HUB_FONT_TITLE, HUB_TEXT_COLOR);
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 0, -8);
-    lv_obj_t *subtitle = createLabel(top, "Family safety control tablet", HUB_FONT_SMALL, HUB_MUTED_COLOR);
+    lv_obj_t *subtitle = createLabel(top, "家庭安全看板", HUB_FONT_SMALL, HUB_MUTED_COLOR);
     lv_obj_align_to(subtitle, title, LV_ALIGN_OUT_BOTTOM_LEFT, 2, 2);
 
-    _mode_label = createLabel(top, "Normal Patrol", HUB_FONT_HEAD, HUB_GREEN_COLOR);
+    _mode_label = createLabel(top, "正常巡检", HUB_FONT_HEAD, HUB_GREEN_COLOR);
     lv_obj_align(_mode_label, LV_ALIGN_RIGHT_MID, -360, -8);
-    _status_label = createLabel(top, "WiFi-CSI Online | Local AI Ready", HUB_FONT_SMALL, HUB_MUTED_COLOR);
+    _status_label = createLabel(top, "WiFi-CSI 在线 | 本地 AI 就绪", HUB_FONT_SMALL, HUB_MUTED_COLOR);
     lv_obj_align_to(_status_label, _mode_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
-    _privacy_label = createLabel(top, "Privacy: Camera Off", HUB_FONT_BODY, HUB_GREEN_COLOR);
+    _privacy_label = createLabel(top, "隐私：摄像头关闭", HUB_FONT_BODY, HUB_GREEN_COLOR);
     lv_obj_align(_privacy_label, LV_ALIGN_RIGHT_MID, 0, 0);
 
     const int content_y = 72;
@@ -182,18 +186,18 @@ bool HomeCareHub::createUi(void)
 
     lv_obj_t *left = createPanel(_root, left_w, content_h, HUB_PANEL_COLOR);
     lv_obj_align(left, LV_ALIGN_TOP_LEFT, 0, content_y);
-    createLabel(left, "Home Zones", HUB_FONT_HEAD, HUB_TEXT_COLOR);
+    createLabel(left, "居家区域", HUB_FONT_HEAD, HUB_TEXT_COLOR);
 
-    const char *room_names[] = {"Living Room", "Bedroom", "Bathroom", "Corridor"};
+    const char *room_names[] = {"客厅", "卧室", "浴室", "走廊"};
     for (int i = 0; i < 4; ++i) {
         lv_obj_t *card = createPanel(left, left_w - 24, 72, HUB_PANEL_2_COLOR);
         lv_obj_align(card, LV_ALIGN_TOP_LEFT, 0, 38 + i * 82);
         _room_cards[i] = card;
         _room_name_labels[i] = createLabel(card, room_names[i], HUB_FONT_BODY, HUB_TEXT_COLOR);
         lv_obj_align(_room_name_labels[i], LV_ALIGN_TOP_LEFT, 0, 0);
-        _room_activity_labels[i] = createLabel(card, "Idle", HUB_FONT_SMALL, HUB_MUTED_COLOR);
+        _room_activity_labels[i] = createLabel(card, "空闲", HUB_FONT_SMALL, HUB_MUTED_COLOR);
         lv_obj_align(_room_activity_labels[i], LV_ALIGN_TOP_LEFT, 0, 26);
-        _room_risk_labels[i] = createLabel(card, "Risk L0", HUB_FONT_SMALL, HUB_GREEN_COLOR);
+        _room_risk_labels[i] = createLabel(card, "风险 L0", HUB_FONT_SMALL, HUB_GREEN_COLOR);
         lv_obj_align(_room_risk_labels[i], LV_ALIGN_TOP_RIGHT, 0, 0);
         _room_csi_labels[i] = createLabel(card, "CSI 20%", HUB_FONT_SMALL, HUB_MUTED_COLOR);
         lv_obj_align(_room_csi_labels[i], LV_ALIGN_BOTTOM_RIGHT, 0, 0);
@@ -201,18 +205,18 @@ bool HomeCareHub::createUi(void)
 
     lv_obj_t *center = createPanel(_root, center_w, content_h, HUB_PANEL_COLOR);
     lv_obj_align_to(center, left, LV_ALIGN_OUT_RIGHT_TOP, 14, 0);
-    createLabel(center, "Patrol Car", HUB_FONT_HEAD, HUB_TEXT_COLOR);
+    createLabel(center, "巡检小车", HUB_FONT_HEAD, HUB_TEXT_COLOR);
 
-    _car_status_label = createLabel(center, "Standing by", HUB_FONT_TITLE, HUB_GREEN_COLOR);
+    _car_status_label = createLabel(center, "待命中", HUB_FONT_TITLE, HUB_GREEN_COLOR);
     lv_obj_align(_car_status_label, LV_ALIGN_TOP_LEFT, 0, 42);
-    _car_position_label = createLabel(center, "Position: Charging Dock", HUB_FONT_BODY, HUB_MUTED_COLOR);
+    _car_position_label = createLabel(center, "位置：充电桩", HUB_FONT_BODY, HUB_MUTED_COLOR);
     lv_obj_align(_car_position_label, LV_ALIGN_TOP_LEFT, 0, 86);
-    _car_target_label = createLabel(center, "Target: Living Room Point", HUB_FONT_BODY, HUB_MUTED_COLOR);
+    _car_target_label = createLabel(center, "目标：客厅巡检点", HUB_FONT_BODY, HUB_MUTED_COLOR);
     lv_obj_align(_car_target_label, LV_ALIGN_TOP_LEFT, 0, 114);
-    _car_phase_label = createLabel(center, "Phase: CSI watch", HUB_FONT_BODY, HUB_MUTED_COLOR);
+    _car_phase_label = createLabel(center, "阶段：CSI 看护", HUB_FONT_BODY, HUB_MUTED_COLOR);
     lv_obj_align(_car_phase_label, LV_ALIGN_TOP_LEFT, 0, 142);
 
-    lv_obj_t *battery_title = createLabel(center, "Battery", HUB_FONT_SMALL, HUB_MUTED_COLOR);
+    lv_obj_t *battery_title = createLabel(center, "电量", HUB_FONT_SMALL, HUB_MUTED_COLOR);
     lv_obj_align(battery_title, LV_ALIGN_TOP_LEFT, 0, 176);
     _battery_bar = lv_bar_create(center);
     lv_obj_set_size(_battery_bar, center_w - 110, 14);
@@ -223,7 +227,7 @@ bool HomeCareHub::createUi(void)
     _battery_label = createLabel(center, "86%", HUB_FONT_SMALL, HUB_TEXT_COLOR);
     lv_obj_align(_battery_label, LV_ALIGN_TOP_RIGHT, 0, 190);
 
-    lv_obj_t *route_title = createLabel(center, "Route", HUB_FONT_SMALL, HUB_MUTED_COLOR);
+    lv_obj_t *route_title = createLabel(center, "路线", HUB_FONT_SMALL, HUB_MUTED_COLOR);
     lv_obj_align(route_title, LV_ALIGN_TOP_LEFT, 0, 228);
     _route_bar = lv_bar_create(center);
     lv_obj_set_size(_route_bar, center_w - 110, 14);
@@ -231,26 +235,26 @@ bool HomeCareHub::createUi(void)
     lv_bar_set_range(_route_bar, 0, 100);
     lv_obj_set_style_bg_color(_route_bar, lv_color_hex(0x334155), LV_PART_MAIN);
     lv_obj_set_style_bg_color(_route_bar, HUB_BLUE_COLOR, LV_PART_INDICATOR);
-    _route_label = createLabel(center, "Dock > Corridor > Point", HUB_FONT_SMALL, HUB_MUTED_COLOR);
+    _route_label = createLabel(center, "充电桩 > 走廊 > 点位", HUB_FONT_SMALL, HUB_MUTED_COLOR);
     lv_obj_align(_route_label, LV_ALIGN_TOP_LEFT, 0, 272);
 
-    _obstacle_label = createLabel(center, "Obstacle: Clear", HUB_FONT_BODY, HUB_TEXT_COLOR);
+    _obstacle_label = createLabel(center, "障碍：通畅", HUB_FONT_BODY, HUB_TEXT_COLOR);
     lv_obj_align(_obstacle_label, LV_ALIGN_TOP_LEFT, 0, 314);
-    _camera_label = createLabel(center, "Camera: Off", HUB_FONT_BODY, HUB_TEXT_COLOR);
+    _camera_label = createLabel(center, "摄像头：关闭", HUB_FONT_BODY, HUB_TEXT_COLOR);
     lv_obj_align(_camera_label, LV_ALIGN_TOP_LEFT, 0, 344);
-    _voice_label = createLabel(center, "Voice: Ready", HUB_FONT_BODY, HUB_TEXT_COLOR);
+    _voice_label = createLabel(center, "语音：待命", HUB_FONT_BODY, HUB_TEXT_COLOR);
     lv_obj_align(_voice_label, LV_ALIGN_TOP_LEFT, 0, 374);
 
     lv_obj_t *right = createPanel(_root, right_w, content_h, HUB_PANEL_COLOR);
     lv_obj_align_to(right, center, LV_ALIGN_OUT_RIGHT_TOP, 14, 0);
-    createLabel(right, "Weather", HUB_FONT_HEAD, HUB_TEXT_COLOR);
-    _weather_label = createLabel(right, "Cloudy", HUB_FONT_TITLE, HUB_BLUE_COLOR);
+    createLabel(right, "天气", HUB_FONT_HEAD, HUB_TEXT_COLOR);
+    _weather_label = createLabel(right, "多云", HUB_FONT_TITLE, HUB_BLUE_COLOR);
     lv_obj_align(_weather_label, LV_ALIGN_TOP_LEFT, 0, 42);
-    _outdoor_label = createLabel(right, "Outdoor 24C", HUB_FONT_BODY, HUB_TEXT_COLOR);
+    _outdoor_label = createLabel(right, "室外 24C", HUB_FONT_BODY, HUB_TEXT_COLOR);
     lv_obj_align(_outdoor_label, LV_ALIGN_TOP_LEFT, 0, 92);
-    _humidity_label = createLabel(right, "Humidity 58%", HUB_FONT_BODY, HUB_TEXT_COLOR);
+    _humidity_label = createLabel(right, "湿度 58%", HUB_FONT_BODY, HUB_TEXT_COLOR);
     lv_obj_align(_humidity_label, LV_ALIGN_TOP_LEFT, 0, 126);
-    _air_label = createLabel(right, "AQI Good", HUB_FONT_BODY, HUB_GREEN_COLOR);
+    _air_label = createLabel(right, "空气 良好", HUB_FONT_BODY, HUB_GREEN_COLOR);
     lv_obj_align(_air_label, LV_ALIGN_TOP_LEFT, 0, 160);
 
     lv_obj_t *divider = lv_obj_create(right);
@@ -260,11 +264,11 @@ bool HomeCareHub::createUi(void)
     lv_obj_set_style_border_width(divider, 0, 0);
     lv_obj_clear_flag(divider, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *env_title = createLabel(right, "Home Env", HUB_FONT_HEAD, HUB_TEXT_COLOR);
+    lv_obj_t *env_title = createLabel(right, "室内环境", HUB_FONT_HEAD, HUB_TEXT_COLOR);
     lv_obj_align(env_title, LV_ALIGN_TOP_LEFT, 0, 226);
-    _indoor_label = createLabel(right, "Indoor 25C / 51%", HUB_FONT_BODY, HUB_TEXT_COLOR);
+    _indoor_label = createLabel(right, "室内 25C / 51%", HUB_FONT_BODY, HUB_TEXT_COLOR);
     lv_obj_align(_indoor_label, LV_ALIGN_TOP_LEFT, 0, 254);
-    _night_label = createLabel(right, "Night risk: low", HUB_FONT_BODY, HUB_MUTED_COLOR);
+    _night_label = createLabel(right, "夜间风险低", HUB_FONT_BODY, HUB_MUTED_COLOR);
     lv_obj_set_width(_night_label, right_w - 28);
     lv_obj_align(_night_label, LV_ALIGN_TOP_LEFT, 0, 294);
 
@@ -279,7 +283,7 @@ bool HomeCareHub::createUi(void)
         lv_obj_align(_event_level_labels[i], LV_ALIGN_TOP_LEFT, 0, 0);
         _event_time_labels[i] = createLabel(event, "08:30", HUB_FONT_SMALL, HUB_MUTED_COLOR);
         lv_obj_align(_event_time_labels[i], LV_ALIGN_TOP_RIGHT, 0, 0);
-        _event_text_labels[i] = createLabel(event, "Normal patrol", HUB_FONT_SMALL, HUB_TEXT_COLOR);
+        _event_text_labels[i] = createLabel(event, "正常巡检", HUB_FONT_SMALL, HUB_TEXT_COLOR);
         lv_obj_set_width(_event_text_labels[i], ((_width - 94) / 4) - 30);
         lv_obj_align(_event_text_labels[i], LV_ALIGN_BOTTOM_LEFT, 0, 0);
     }
@@ -294,7 +298,7 @@ bool HomeCareHub::createUi(void)
     lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
 
-    const char *button_texts[] = {"Patrol", "Recall", "Privacy", "Contact"};
+    const char *button_texts[] = {"巡检", "回充", "隐私", "呼叫"};
     for (int i = 0; i < 4; ++i) {
         lv_obj_t *btn = lv_btn_create(actions);
         lv_obj_set_size(btn, 82, 38);
@@ -316,7 +320,7 @@ bool HomeCareHub::createUi(void)
     lv_obj_set_flex_align(modes, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(modes, LV_OBJ_FLAG_SCROLLABLE);
 
-    const char *mode_texts[] = {"Normal", "Fall", "Bath", "Night"};
+    const char *mode_texts[] = {"正常", "跌倒", "浴室", "夜间"};
     for (int i = 0; i < MODE_MAX; ++i) {
         lv_obj_t *btn = lv_btn_create(modes);
         lv_obj_set_size(btn, (right_w - 40) / 2, 36);
@@ -343,75 +347,75 @@ void HomeCareHub::updateUi(void)
 {
     const DashboardState states[MODE_MAX] = {
         {
-            "Normal Patrol", "WiFi-CSI Online | Local AI Ready", "Privacy: Camera Off",
-            "Cloudy", "Outdoor 24C", "Humidity 58%", "AQI Good", "Indoor 25C / 51%", "Night risk: low",
-            "Standing by", "Charging Dock", "Living Room Point", "CSI watch", "Obstacle: Clear", "Camera: Off", "Voice: Ready",
+            "正常巡检", "WiFi-CSI 在线 | 本地 AI 就绪", "隐私：摄像头关闭",
+            "多云", "室外 24C", "湿度 58%", "空气 良好", "室内 25C / 51%", "夜间风险低",
+            "待命中", "充电桩", "客厅巡检点", "CSI 看护", "障碍：通畅", "摄像头：关闭", "语音：待命",
             86, 12,
             {{
-                {"Living Room", "Presence stable", "Risk L0", 31, true, false, HUB_GREEN_COLOR},
-                {"Bedroom", "Resting zone quiet", "Risk L0", 18, false, true, HUB_GREEN_COLOR},
-                {"Bathroom", "No stay detected", "Risk L0", 14, false, true, HUB_GREEN_COLOR},
-                {"Corridor", "Clear path", "Risk L0", 20, false, false, HUB_GREEN_COLOR},
+                {"客厅", "有人且稳定", "风险 L0", 31, true, false, HUB_GREEN_COLOR},
+                {"卧室", "休息区安静", "风险 L0", 18, false, true, HUB_GREEN_COLOR},
+                {"浴室", "未见久留", "风险 L0", 14, false, true, HUB_GREEN_COLOR},
+                {"走廊", "通道清", "风险 L0", 20, false, false, HUB_GREEN_COLOR},
             }},
             {{
-                {"L0", "08:30", "Routine patrol complete", HUB_GREEN_COLOR},
-                {"L0", "08:18", "Camera stayed off", HUB_GREEN_COLOR},
-                {"L1", "07:42", "Bedroom micro motion", HUB_BLUE_COLOR},
-                {"L0", "07:20", "Car returned to dock", HUB_GREEN_COLOR},
+                {"L0", "08:30", "日常巡检完成", HUB_GREEN_COLOR},
+                {"L0", "08:18", "摄像头保持关闭", HUB_GREEN_COLOR},
+                {"L1", "07:42", "卧室轻微活动", HUB_BLUE_COLOR},
+                {"L0", "07:20", "小车已回充", HUB_GREEN_COLOR},
             }},
         },
         {
-            "Suspected Fall", "CSI High Motion | Dispatching Car", "Privacy: Event Check",
-            "Cloudy", "Outdoor 24C", "Humidity 58%", "AQI Good", "Indoor 25C / 51%", "High priority: confirm living room",
-            "Moving to scene", "Corridor", "Living Room Point", "Visual confirmation", "Obstacle: Shoe avoided", "Camera: Local AI On", "Voice: Asking user",
+            "疑似跌倒", "CSI 高动态 | 小车出发", "隐私：事件确认",
+            "多云", "室外 24C", "湿度 58%", "空气 良好", "室内 25C / 51%", "优先确认客厅",
+            "前往现场", "走廊", "客厅巡检点", "视觉确认", "障碍：已绕行", "摄像头：本地 AI 开启", "语音：询问用户",
             78, 74,
             {{
-                {"Living Room", "High then static", "Risk L3", 88, true, false, HUB_RED_COLOR},
-                {"Bedroom", "No activity", "Risk L0", 12, false, true, HUB_GREEN_COLOR},
-                {"Bathroom", "Clear", "Risk L0", 10, false, true, HUB_GREEN_COLOR},
-                {"Corridor", "Car passing", "Risk L1", 45, true, false, HUB_BLUE_COLOR},
+                {"客厅", "高动态后静止", "风险 L3", 88, true, false, HUB_RED_COLOR},
+                {"卧室", "无活动", "风险 L0", 12, false, true, HUB_GREEN_COLOR},
+                {"浴室", "清", "风险 L0", 10, false, true, HUB_GREEN_COLOR},
+                {"走廊", "小车经过", "风险 L1", 45, true, false, HUB_BLUE_COLOR},
             }},
             {{
-                {"L3", "22:31", "Vision checking possible fall", HUB_RED_COLOR},
-                {"L2", "22:30", "Car sent to living room", HUB_ORANGE_COLOR},
-                {"L2", "22:30", "CSI suspected fall", HUB_ORANGE_COLOR},
-                {"L0", "22:15", "Night patrol idle", HUB_GREEN_COLOR},
+                {"L3", "22:31", "视觉确认疑似跌倒", HUB_RED_COLOR},
+                {"L2", "22:30", "小车前往客厅", HUB_ORANGE_COLOR},
+                {"L2", "22:30", "CSI 疑似跌倒", HUB_ORANGE_COLOR},
+                {"L0", "22:15", "夜间巡检待命", HUB_GREEN_COLOR},
             }},
         },
         {
-            "Bathroom Stay", "CSI Stay Timer | Door-Zone Only", "Privacy: Bathroom Protected",
-            "Light rain", "Outdoor 22C", "Humidity 76%", "AQI Good", "Indoor 24C / 55%", "Watch timeout before alert",
-            "Holding outside", "Bathroom Door", "Bathroom Door", "Voice inquiry", "Obstacle: Clear", "Camera: Door-zone only", "Voice: Asking softly",
+            "浴室久留", "CSI 久留计时 | 门区保护", "隐私：浴室保护",
+            "小雨", "室外 22C", "湿度 76%", "空气 良好", "室内 24C / 55%", "超时前先观察",
+            "门外等待", "浴室门口", "浴室门口", "语音询问", "障碍：通畅", "摄像头：仅门区", "语音：轻声询问",
             72, 100,
             {{
-                {"Living Room", "Quiet", "Risk L0", 15, false, false, HUB_GREEN_COLOR},
-                {"Bedroom", "Empty", "Risk L0", 12, false, true, HUB_GREEN_COLOR},
-                {"Bathroom", "Stay timeout", "Risk L2", 79, true, true, HUB_ORANGE_COLOR},
-                {"Corridor", "Car parked", "Risk L1", 40, true, false, HUB_BLUE_COLOR},
+                {"客厅", "安静", "风险 L0", 15, false, false, HUB_GREEN_COLOR},
+                {"卧室", "无人", "风险 L0", 12, false, true, HUB_GREEN_COLOR},
+                {"浴室", "久留超时", "风险 L2", 79, true, true, HUB_ORANGE_COLOR},
+                {"走廊", "小车停靠", "风险 L1", 40, true, false, HUB_BLUE_COLOR},
             }},
             {{
-                {"L2", "21:08", "Bathroom stay timeout", HUB_ORANGE_COLOR},
-                {"L2", "21:07", "Car waiting at door", HUB_ORANGE_COLOR},
-                {"L1", "21:02", "Entered bathroom area", HUB_BLUE_COLOR},
-                {"L0", "20:55", "Privacy zone camera off", HUB_GREEN_COLOR},
+                {"L2", "21:08", "浴室久留超时", HUB_ORANGE_COLOR},
+                {"L2", "21:07", "小车门外等待", HUB_ORANGE_COLOR},
+                {"L1", "21:02", "进入浴室区", HUB_BLUE_COLOR},
+                {"L0", "20:55", "隐私区摄像头关闭", HUB_GREEN_COLOR},
             }},
         },
         {
-            "Night Leave-Bed", "CSI Bed Exit | Low-Speed Follow", "Privacy: Camera Off",
-            "Clear night", "Outdoor 19C", "Humidity 62%", "AQI Excellent", "Indoor 23C / 49%", "Guide lights and watch corridor",
-            "Low-speed follow", "Bedroom Door", "Corridor Point", "Night escort", "Obstacle: Clear", "Camera: Off", "Voice: Standby",
+            "夜间离床", "CSI 离床 | 低速跟随", "隐私：摄像头关闭",
+            "晴夜", "室外 19C", "湿度 62%", "空气 优秀", "室内 23C / 49%", "引导灯并看护走廊",
+            "低速跟随", "卧室门口", "走廊点位", "夜间陪护", "障碍：通畅", "摄像头：关闭", "语音：待命",
             81, 46,
             {{
-                {"Living Room", "No activity", "Risk L0", 18, false, false, HUB_GREEN_COLOR},
-                {"Bedroom", "Bed exit", "Risk L1", 64, true, true, HUB_BLUE_COLOR},
-                {"Bathroom", "Waiting", "Risk L0", 16, false, true, HUB_GREEN_COLOR},
-                {"Corridor", "Motion detected", "Risk L1", 56, true, false, HUB_BLUE_COLOR},
+                {"客厅", "无活动", "风险 L0", 18, false, false, HUB_GREEN_COLOR},
+                {"卧室", "离床", "风险 L1", 64, true, true, HUB_BLUE_COLOR},
+                {"浴室", "等待", "风险 L0", 16, false, true, HUB_GREEN_COLOR},
+                {"走廊", "发现活动", "风险 L1", 56, true, false, HUB_BLUE_COLOR},
             }},
             {{
-                {"L1", "02:14", "Night bed-exit detected", HUB_BLUE_COLOR},
-                {"L1", "02:14", "Car moved to corridor", HUB_BLUE_COLOR},
-                {"L0", "02:10", "Bedroom resting stable", HUB_GREEN_COLOR},
-                {"L0", "01:40", "System quiet watch", HUB_GREEN_COLOR},
+                {"L1", "02:14", "夜间离床发现", HUB_BLUE_COLOR},
+                {"L1", "02:14", "小车移动至走廊", HUB_BLUE_COLOR},
+                {"L0", "02:10", "卧室休息稳定", HUB_GREEN_COLOR},
+                {"L0", "01:40", "系统安静看护", HUB_GREEN_COLOR},
             }},
         },
     };
@@ -420,7 +424,7 @@ void HomeCareHub::updateUi(void)
     lv_label_set_text(_mode_label, state.mode_name);
     lv_obj_set_style_text_color(_mode_label, _mode == MODE_FALL ? HUB_RED_COLOR : (_mode == MODE_BATHROOM ? HUB_ORANGE_COLOR : HUB_GREEN_COLOR), 0);
     lv_label_set_text(_status_label, state.home_status);
-    lv_label_set_text(_privacy_label, _privacy_enabled ? state.privacy : "Privacy: Manual Camera Allowed");
+    lv_label_set_text(_privacy_label, _privacy_enabled ? state.privacy : "隐私：手动允许摄像头");
     lv_obj_set_style_text_color(_privacy_label, _privacy_enabled ? HUB_GREEN_COLOR : HUB_YELLOW_COLOR, 0);
 
     lv_label_set_text(_weather_label, state.weather);
@@ -432,9 +436,9 @@ void HomeCareHub::updateUi(void)
 
     lv_label_set_text(_car_status_label, state.car_status);
     lv_obj_set_style_text_color(_car_status_label, _mode == MODE_FALL ? HUB_RED_COLOR : (_mode == MODE_BATHROOM ? HUB_ORANGE_COLOR : HUB_GREEN_COLOR), 0);
-    lv_label_set_text_fmt(_car_position_label, "Position: %s", state.car_position);
-    lv_label_set_text_fmt(_car_target_label, "Target: %s", state.car_target);
-    lv_label_set_text_fmt(_car_phase_label, "Phase: %s", state.car_phase);
+    lv_label_set_text_fmt(_car_position_label, "位置：%s", state.car_position);
+    lv_label_set_text_fmt(_car_target_label, "目标：%s", state.car_target);
+    lv_label_set_text_fmt(_car_phase_label, "阶段：%s", state.car_phase);
     lv_label_set_text(_obstacle_label, state.obstacle);
     lv_label_set_text(_camera_label, state.camera);
     lv_label_set_text(_voice_label, state.voice);
@@ -446,7 +450,7 @@ void HomeCareHub::updateUi(void)
     for (int i = 0; i < 4; ++i) {
         const RoomState &room = state.rooms[i];
         lv_label_set_text(_room_name_labels[i], room.name);
-        lv_label_set_text_fmt(_room_activity_labels[i], "%s%s", room.activity, room.privacy_zone ? " | private" : "");
+        lv_label_set_text_fmt(_room_activity_labels[i], "%s%s", room.activity, room.privacy_zone ? " | 私密" : "");
         lv_label_set_text(_room_risk_labels[i], room.risk);
         lv_obj_set_style_text_color(_room_risk_labels[i], room.accent, 0);
         lv_label_set_text_fmt(_room_csi_labels[i], "CSI %d%%", room.csi);
@@ -486,11 +490,11 @@ void HomeCareHub::actionEventCb(lv_event_t *e)
         app->setMode(MODE_NORMAL);
     } else if (action == 1) {
         app->setMode(MODE_NORMAL);
-        lv_label_set_text(app->_car_status_label, "Returning to dock");
-        lv_label_set_text(app->_car_phase_label, "Phase: recall command");
+        lv_label_set_text(app->_car_status_label, "回充中");
+        lv_label_set_text(app->_car_phase_label, "阶段：回充指令");
         lv_bar_set_value(app->_route_bar, 30, LV_ANIM_ON);
     } else if (action == 3) {
-        lv_label_set_text(app->_voice_label, "Voice: Calling family");
+        lv_label_set_text(app->_voice_label, "语音：呼叫家人");
     } else {
         app->_privacy_enabled = !app->_privacy_enabled;
         app->updateUi();

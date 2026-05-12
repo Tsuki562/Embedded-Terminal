@@ -7,9 +7,22 @@ set(CMAKE_OBJECT_PATH_MAX 512)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
-set(EXTRA_COMPONENT_DIRS
-    ../common_components
-    )
+set(EXTRA_COMPONENT_DIRS "")
+set(PROJECT_COMMON_COMPONENT_DIR_CANDIDATES
+    "${CMAKE_CURRENT_LIST_DIR}/../common_components"
+    "${CMAKE_CURRENT_LIST_DIR}/../esp-dev-kits-master/esp-dev-kits-master/examples/esp32-p4-function-ev-board/examples/common_components"
+)
+
+foreach(COMMON_COMPONENT_DIR IN LISTS PROJECT_COMMON_COMPONENT_DIR_CANDIDATES)
+    if(EXISTS "${COMMON_COMPONENT_DIR}")
+        list(APPEND EXTRA_COMPONENT_DIRS "${COMMON_COMPONENT_DIR}")
+        break()
+    endif()
+endforeach()
+
+if(NOT EXTRA_COMPONENT_DIRS)
+    message(FATAL_ERROR "Could not find common_components. Expected one of: ${PROJECT_COMMON_COMPONENT_DIR_CANDIDATES}")
+endif()
 
 set(CXX_COMPILE_OPTIONS
     -Wno-deprecated-enum-enum-conversion

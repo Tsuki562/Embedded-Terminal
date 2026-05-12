@@ -43,6 +43,7 @@ private:
     uint8_t *_img_album_buffer;
     SemaphoreHandle_t _camera_init_sem;
     int _camera_ctlr_handle;
+    bool _is_streaming;
     lv_img_dsc_t _img_refresh_dsc;
     lv_img_dsc_t _img_album_dsc;
     lv_img_dsc_t _img_photo_dsc;
@@ -51,4 +52,3 @@ private:
     uint8_t *_cam_buffer[EXAMPLE_CAM_BUF_NUM];
     size_t _cam_buffer_size[EXAMPLE_CAM_BUF_NUM];
 };
-

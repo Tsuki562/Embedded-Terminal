@@ -3,6 +3,7 @@
 #include <array>
 #include "lvgl.h"
 #include "esp_brookesia.hpp"
+#include "mqtt_bridge/HomeCareMqttBridge.hpp"
 
 class HomeCareHub: public ESP_Brookesia_PhoneApp {
 public:
@@ -67,7 +68,11 @@ private:
     void setMode(DemoMode mode);
     void updateUi(void);
     void deleteTimer(void);
+    void applyMqttMessages(void);
+    void applyMqttMessage(const HomeCareMqttInboundMessage &message);
     void updatePageIndicator(int page);
+    homecare_mqtt_mode_t toMqttMode(DemoMode mode) const;
+    DemoMode fromMqttMode(homecare_mqtt_mode_t mode) const;
 
     lv_obj_t *createPanel(lv_obj_t *parent, int32_t width, int32_t height, lv_color_t bg);
     lv_obj_t *createLabel(lv_obj_t *parent, const char *text, const lv_font_t *font, lv_color_t color);
@@ -80,9 +85,13 @@ private:
 
     DemoMode _mode;
     lv_timer_t *_timer;
+    lv_timer_t *_mqtt_timer;
     uint16_t _width;
     uint16_t _height;
     bool _privacy_enabled;
+    bool _has_mqtt_event;
+    HomeCareMqttEvent _mqtt_event;
+    lv_color_t _mqtt_event_color;
 
     lv_obj_t *_root;
     lv_obj_t *_pages;

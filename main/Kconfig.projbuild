@@ -4,4 +4,31 @@ menu "Example Configurations"
         default n
         help 
             Enabling this option will initialize the SD card, so the SD card needs to be inserted into the slot. Additionally, if using the Video Player example, an MJPEG format video must be saved on the SD card.
+
+    menu "HomeCare MQTT"
+        config HOMECARE_MQTT_BROKER_URI
+            string "MQTT broker URI"
+            default "mqtt://broker.hivemq.com"
+            help
+                MQTT broker used by the HomeCare hub. Supported schemes follow ESP-MQTT, such as mqtt://, mqtts://, ws://, and wss://.
+
+        config HOMECARE_MQTT_CLIENT_ID
+            string "MQTT client ID"
+            default "esp-brookesia-homecare"
+            help
+                Client ID sent when connecting to the broker.
+
+        config HOMECARE_MQTT_BASE_TOPIC
+            string "Base topic"
+            default "homecare/hub"
+            help
+                Base topic for receive and forward channels. The app subscribes to BASE/in/# and BASE/cmd/#, and publishes to BASE/out/#.
+
+        config HOMECARE_MQTT_QUEUE_SIZE
+            int "Inbound queue size"
+            range 1 32
+            default 8
+            help
+                Number of decoded MQTT messages buffered for the UI.
+    endmenu
 endmenu

@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include "HomeCareHub.hpp"
 
 LV_IMG_DECLARE(img_app_setting);
@@ -31,9 +32,13 @@ HomeCareHub::HomeCareHub():
     ESP_Brookesia_PhoneApp("家庭终端", &img_app_setting, true),
     _mode(MODE_NORMAL),
     _timer(nullptr),
+    _mqtt_timer(nullptr),
     _width(1024),
     _height(600),
     _privacy_enabled(true),
+    _has_mqtt_event(false),
+    _mqtt_event({}),
+    _mqtt_event_color(HUB_BLUE_COLOR),
     _root(nullptr),
     _pages(nullptr),
     _page_dots({}),
@@ -76,6 +81,7 @@ HomeCareHub::~HomeCareHub()
 
 bool HomeCareHub::init(void)
 {
+    homecare_mqtt_bridge_init();
     return true;
 }
 
@@ -94,6 +100,7 @@ bool HomeCareHub::run(void)
     createUi();
     setMode(MODE_NORMAL);
     _timer = lv_timer_create(timerCb, 6000, this);
+    _mqtt_timer = lv_timer_create(timerCb, 1000, this);
     return true;
 }
 
@@ -120,6 +127,10 @@ void HomeCareHub::deleteTimer(void)
     if (_timer != nullptr) {
         lv_timer_del(_timer);
         _timer = nullptr;
+    }
+    if (_mqtt_timer != nullptr) {
+        lv_timer_del(_mqtt_timer);
+        _mqtt_timer = nullptr;
     }
 }
 
@@ -425,6 +436,79 @@ void HomeCareHub::setMode(DemoMode mode)
     updateUi();
 }
 
+homecare_mqtt_mode_t HomeCareHub::toMqttMode(DemoMode mode) const
+{
+    switch (mode) {
+    case MODE_NORMAL:
+        return HOMECARE_MQTT_MODE_NORMAL;
+    case MODE_FALL:
+        return HOMECARE_MQTT_MODE_FALL;
+    case MODE_BATHROOM:
+        return HOMECARE_MQTT_MODE_BATHROOM;
+    case MODE_NIGHT:
+        return HOMECARE_MQTT_MODE_NIGHT;
+    default:
+        return HOMECARE_MQTT_MODE_UNKNOWN;
+    }
+}
+
+HomeCareHub::DemoMode HomeCareHub::fromMqttMode(homecare_mqtt_mode_t mode) const
+{
+    switch (mode) {
+    case HOMECARE_MQTT_MODE_NORMAL:
+        return MODE_NORMAL;
+    case HOMECARE_MQTT_MODE_FALL:
+        return MODE_FALL;
+    case HOMECARE_MQTT_MODE_BATHROOM:
+        return MODE_BATHROOM;
+    case HOMECARE_MQTT_MODE_NIGHT:
+        return MODE_NIGHT;
+    default:
+        return _mode;
+    }
+}
+
+void HomeCareHub::applyMqttMessage(const HomeCareMqttInboundMessage &message)
+{
+    if (message.has_mode) {
+        _mode = fromMqttMode(message.mode);
+    }
+
+    if (message.type == HOMECARE_MQTT_INBOUND_EVENT) {
+        _has_mqtt_event = true;
+        _mqtt_event = message.event;
+        if (_mqtt_event.level[0] == '\0') {
+            std::snprintf(_mqtt_event.level, sizeof(_mqtt_event.level), "L1");
+        }
+        if (_mqtt_event.time[0] == '\0') {
+            std::snprintf(_mqtt_event.time, sizeof(_mqtt_event.time), "MQTT");
+        }
+        if (_mqtt_event.text[0] == '\0') {
+            std::snprintf(_mqtt_event.text, sizeof(_mqtt_event.text), "MQTT message received");
+        }
+
+        if (std::strcmp(_mqtt_event.level, "L3") == 0) {
+            _mqtt_event_color = HUB_RED_COLOR;
+        } else if (std::strcmp(_mqtt_event.level, "L2") == 0) {
+            _mqtt_event_color = HUB_ORANGE_COLOR;
+        } else if (std::strcmp(_mqtt_event.level, "L1") == 0) {
+            _mqtt_event_color = HUB_BLUE_COLOR;
+        } else {
+            _mqtt_event_color = HUB_GREEN_COLOR;
+        }
+    }
+
+    updateUi();
+}
+
+void HomeCareHub::applyMqttMessages(void)
+{
+    HomeCareMqttInboundMessage message = {};
+    while (homecare_mqtt_bridge_receive(&message)) {
+        applyMqttMessage(message);
+    }
+}
+
 void HomeCareHub::updateUi(void)
 {
     const DashboardState states[MODE_MAX] = {
@@ -547,6 +631,14 @@ void HomeCareHub::updateUi(void)
         lv_obj_set_style_text_color(_event_level_labels[i], event.accent, 0);
         setCardAccent(_event_cards[i], event.accent);
     }
+
+    if (_has_mqtt_event) {
+        lv_label_set_text(_event_level_labels[0], _mqtt_event.level);
+        lv_label_set_text(_event_time_labels[0], _mqtt_event.time);
+        lv_label_set_text(_event_text_labels[0], _mqtt_event.text);
+        lv_obj_set_style_text_color(_event_level_labels[0], _mqtt_event_color, 0);
+        setCardAccent(_event_cards[0], _mqtt_event_color);
+    }
 }
 
 void HomeCareHub::scenarioEventCb(lv_event_t *e)
@@ -556,6 +648,7 @@ void HomeCareHub::scenarioEventCb(lv_event_t *e)
     int mode = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(target)));
     if (app != nullptr && mode >= 0 && mode < MODE_MAX) {
         app->setMode(static_cast<DemoMode>(mode));
+        homecare_mqtt_bridge_publish_mode(app->toMqttMode(static_cast<DemoMode>(mode)));
     }
 }
 
@@ -569,15 +662,19 @@ void HomeCareHub::actionEventCb(lv_event_t *e)
     int action = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(btn)));
 
     if (action == 0) {
+        homecare_mqtt_bridge_publish_action(HOMECARE_MQTT_ACTION_PATROL);
         app->setMode(MODE_NORMAL);
     } else if (action == 1) {
+        homecare_mqtt_bridge_publish_action(HOMECARE_MQTT_ACTION_RECHARGE);
         app->setMode(MODE_NORMAL);
         lv_label_set_text(app->_car_status_label, "回充中");
         lv_label_set_text(app->_car_phase_label, "阶段：回充指令");
         lv_bar_set_value(app->_route_bar, 30, LV_ANIM_ON);
     } else if (action == 3) {
+        homecare_mqtt_bridge_publish_action(HOMECARE_MQTT_ACTION_CALL_FAMILY);
         lv_label_set_text(app->_voice_label, "语音：呼叫家人");
     } else {
+        homecare_mqtt_bridge_publish_action(HOMECARE_MQTT_ACTION_PRIVACY_TOGGLE);
         app->_privacy_enabled = !app->_privacy_enabled;
         app->updateUi();
     }
@@ -604,6 +701,10 @@ void HomeCareHub::timerCb(lv_timer_t *timer)
 {
     HomeCareHub *app = static_cast<HomeCareHub *>(timer->user_data);
     if (app == nullptr) {
+        return;
+    }
+    if (timer == app->_mqtt_timer) {
+        app->applyMqttMessages();
         return;
     }
     int next = (static_cast<int>(app->_mode) + 1) % MODE_MAX;

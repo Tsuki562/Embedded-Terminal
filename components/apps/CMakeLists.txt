@@ -5,7 +5,7 @@ file(GLOB_RECURSE APPS_CPP_SRCS ${APPS_DIR}/*.cpp)
 idf_component_register(
     SRCS ${APPS_C_SRCS} ${APPS_CPP_SRCS}
     INCLUDE_DIRS ${APPS_DIR}
-    REQUIRES lvgl__lvgl esp_lvgl_adapter esp_event esp_wifi nvs_flash esp_driver_jpeg esp_mm esp-brookesia bsp_extra esp32_p4_function_ev_board_noglib)
+    REQUIRES lvgl__lvgl esp_lvgl_adapter esp_event esp_netif esp_wifi mqtt nvs_flash esp_driver_jpeg esp_mm esp-brookesia bsp_extra esp32_p4_function_ev_board_noglib)
 
 target_compile_options(
     ${COMPONENT_LIB}

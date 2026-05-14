@@ -941,10 +941,10 @@ void AppSettings::onSwitchPanelScreenSettingBLESwitchValueChangeEventCallback( l
     ESP_BROOKESIA_CHECK_NULL_GOTO(app, end, "Invalid app pointer");
 
     if (state & LV_STATE_CHECKED) {
-        app->_nvs_param_map[NVS_KEY_WIFI_ENABLE] = true;
+        app->_nvs_param_map[NVS_KEY_BLE_ENABLE] = true;
         app->setNvsParam(NVS_KEY_BLE_ENABLE, 1);
     } else {
-        app->_nvs_param_map[NVS_KEY_WIFI_ENABLE] = false;
+        app->_nvs_param_map[NVS_KEY_BLE_ENABLE] = false;
         app->setNvsParam(NVS_KEY_BLE_ENABLE, 0);
     }
 

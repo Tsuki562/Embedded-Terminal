@@ -8,7 +8,7 @@ menu "Example Configurations"
     menu "HomeCare MQTT"
         config HOMECARE_MQTT_BROKER_URI
             string "MQTT broker URI"
-            default "mqtt://broker.hivemq.com"
+            default "mqtts://test.mosquitto.org:8886"
             help
                 MQTT broker used by the HomeCare hub. Supported schemes follow ESP-MQTT, such as mqtt://, mqtts://, ws://, and wss://.
 

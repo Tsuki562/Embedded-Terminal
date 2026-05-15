@@ -6,6 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "esp_check.h"
+#include "esp_crt_bundle.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -13,7 +14,7 @@
 #include "mqtt_client.h"
 
 #ifndef CONFIG_HOMECARE_MQTT_BROKER_URI
-#define CONFIG_HOMECARE_MQTT_BROKER_URI "mqtt://broker.hivemq.com"
+#define CONFIG_HOMECARE_MQTT_BROKER_URI "mqtts://test.mosquitto.org:8886"
 #endif
 
 #ifndef CONFIG_HOMECARE_MQTT_CLIENT_ID
@@ -164,6 +165,9 @@ esp_err_t homecare_mqtt_bridge_init(void)
 
     esp_mqtt_client_config_t mqtt_cfg = {};
     mqtt_cfg.broker.address.uri = CONFIG_HOMECARE_MQTT_BROKER_URI;
+#if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
+    mqtt_cfg.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
+#endif
     mqtt_cfg.credentials.client_id = CONFIG_HOMECARE_MQTT_CLIENT_ID;
     mqtt_cfg.session.last_will.topic = CONFIG_HOMECARE_MQTT_BASE_TOPIC "/out/status";
     mqtt_cfg.session.last_will.msg = "{\"status\":\"offline\"}";

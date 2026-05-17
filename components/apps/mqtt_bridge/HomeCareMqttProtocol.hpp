@@ -8,6 +8,7 @@ extern "C" {
 #endif
 
 #define HOMECARE_MQTT_TOPIC_SUFFIX_MAX_LEN 64
+#define HOMECARE_MQTT_TOPIC_MAX_LEN 96
 #define HOMECARE_MQTT_PAYLOAD_MAX_LEN 256
 #define HOMECARE_MQTT_TEXT_MAX_LEN 96
 #define HOMECARE_MQTT_FIELD_MAX_LEN 24
@@ -40,10 +41,22 @@ typedef struct {
 } HomeCareMqttEvent;
 
 typedef struct {
+    bool valid;
+    float roll_deg;
+    float pitch_deg;
+    float yaw_deg;
+    bool has_mag;
+    long long timestamp_ms;
+} HomeCareMqttSmartCarAttitude;
+
+typedef struct {
     homecare_mqtt_inbound_type_t type;
+    char topic[HOMECARE_MQTT_TOPIC_MAX_LEN];
     bool has_mode;
     homecare_mqtt_mode_t mode;
     HomeCareMqttEvent event;
+    bool has_smartcar_attitude;
+    HomeCareMqttSmartCarAttitude smartcar_attitude;
 } HomeCareMqttInboundMessage;
 
 typedef struct {

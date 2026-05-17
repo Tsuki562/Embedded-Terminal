@@ -8,15 +8,45 @@ menu "Example Configurations"
     menu "HomeCare MQTT"
         config HOMECARE_MQTT_BROKER_URI
             string "MQTT broker URI"
-            default "mqtts://test.mosquitto.org:8886"
+            default "mqtts://x3a5a71f.ala.cn-hangzhou.emqxsl.cn:8883"
             help
                 MQTT broker used by the HomeCare hub. Supported schemes follow ESP-MQTT, such as mqtt://, mqtts://, ws://, and wss://.
 
         config HOMECARE_MQTT_CLIENT_ID
             string "MQTT client ID"
-            default "esp-brookesia-homecare"
+            default "123"
             help
                 Client ID sent when connecting to the broker.
+
+        config HOMECARE_MQTT_USERNAME
+            string "MQTT username"
+            default "wsh"
+            help
+                Username sent when connecting to the broker.
+
+        config HOMECARE_MQTT_PASSWORD
+            string "MQTT password"
+            default "wsh040428"
+            help
+                Password sent when connecting to the broker. Override it in menuconfig or sdkconfig if the broker-side credential changes.
+
+        config HOMECARE_MQTT_INBOUND_CMD_TOPIC
+            string "Inbound smart-car command topic"
+            default "smartcar/cmd"
+            help
+                Additional MQTT topic for smart-car style downlink commands such as {"data":{"nav":"pause"}} or plain text stop.
+
+        config HOMECARE_MQTT_INBOUND_SMARTCAR_DATA_TOPIC
+            string "Inbound smart-car data topic"
+            default "smartcar/attitude"
+            help
+                Smart-car telemetry topic published by the ESP32-S3 patrol car. The current parser understands payloads like {"r":1.25,"p":-2.50,"y":178.80,"mag":true,"ts":123456789}.
+
+        config HOMECARE_MQTT_INBOUND_AUX_TOPIC
+            string "Inbound auxiliary device topic"
+            default ""
+            help
+                Optional second external device topic. Leave empty to disable. This can be used later for uvc_st7735_display(1) after its actual MQTT publish topic is confirmed.
 
         config HOMECARE_MQTT_BASE_TOPIC
             string "Base topic"
@@ -30,5 +60,32 @@ menu "Example Configurations"
             default 8
             help
                 Number of decoded MQTT messages buffered for the UI.
+    endmenu
+
+    menu "HomeCare Weather"
+        config HOMECARE_WEATHER_ENABLE
+            bool "Enable real weather fetching"
+            default y
+            help
+                Fetch live outdoor weather over HTTPS instead of relying on demo-only hardcoded text.
+
+        config HOMECARE_WEATHER_LATITUDE
+            string "Weather latitude"
+            default "30.2741"
+            help
+                Latitude used for live weather requests. Set it to the deployment location of the device.
+
+        config HOMECARE_WEATHER_LONGITUDE
+            string "Weather longitude"
+            default "120.1551"
+            help
+                Longitude used for live weather requests. Set it to the deployment location of the device.
+
+        config HOMECARE_WEATHER_REFRESH_MINUTES
+            int "Weather refresh interval (minutes)"
+            range 5 240
+            default 15
+            help
+                Background refresh interval for real weather data.
     endmenu
 endmenu

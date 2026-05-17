@@ -2,16 +2,24 @@
 #include <cstdint>
 #include <cstring>
 #include "HomeCareHub.hpp"
+#include "HomeCareWeather.hpp"
 
+// 应用图标和中文字体资源由 LVGL 的资源编译流程生成，这里只声明外部符号。
 LV_IMG_DECLARE(img_app_setting);
 LV_FONT_DECLARE(homecare_font_simsun_14);
 LV_FONT_DECLARE(homecare_font_simsun_16);
 LV_FONT_DECLARE(homecare_font_simsun_20);
 LV_FONT_DECLARE(homecare_font_simsun_28);
 
+// HomeCareHub 的主色板：深色背景、面板层级、边框、阴影和状态提示色。
 #define HUB_BG_COLOR           lv_color_hex(0x101722)
-#define HUB_PANEL_COLOR        lv_color_hex(0x182231)
-#define HUB_PANEL_2_COLOR      lv_color_hex(0x202C3B)
+#define HUB_BG_GRAD_COLOR      lv_color_hex(0x142433)
+#define HUB_PANEL_COLOR        lv_color_hex(0x162333)
+#define HUB_PANEL_GRAD_COLOR   lv_color_hex(0x203047)
+#define HUB_PANEL_2_COLOR      lv_color_hex(0x1E2C3B)
+#define HUB_CARD_GRAD_COLOR    lv_color_hex(0x25364A)
+#define HUB_LINE_COLOR         lv_color_hex(0x334155)
+#define HUB_SHADOW_COLOR       lv_color_hex(0x050A12)
 #define HUB_TEXT_COLOR         lv_color_hex(0xF5F7FB)
 #define HUB_MUTED_COLOR        lv_color_hex(0x9AA8BA)
 #define HUB_BLUE_COLOR         lv_color_hex(0x4CA3FF)
@@ -21,13 +29,17 @@ LV_FONT_DECLARE(homecare_font_simsun_28);
 #define HUB_RED_COLOR          lv_color_hex(0xEF4444)
 #define HUB_PURPLE_COLOR       lv_color_hex(0xA78BFA)
 
+// 统一使用本应用内置的宋体字号，避免不同控件各自硬编码字体资源。
 #define HUB_FONT_TITLE         (&homecare_font_simsun_28)
 #define HUB_FONT_HEAD          (&homecare_font_simsun_20)
 #define HUB_FONT_BODY          (&homecare_font_simsun_16)
 #define HUB_FONT_SMALL         (&homecare_font_simsun_14)
+// 横向仪表盘固定为三页：区域、巡检小车、环境/事件。
 #define HUB_PAGE_COUNT         (3)
+// 页面之间的间距，同时用于滚动结束后计算当前页。
 #define HUB_PAGE_GAP           (14)
 
+// 构造函数只初始化成员和注册应用元信息，真正的 LVGL 对象在 run() 中创建。
 HomeCareHub::HomeCareHub():
     ESP_Brookesia_PhoneApp("家庭终端", &img_app_setting, true),
     _mode(MODE_NORMAL),
@@ -39,6 +51,9 @@ HomeCareHub::HomeCareHub():
     _has_mqtt_event(false),
     _mqtt_event({}),
     _mqtt_event_color(HUB_BLUE_COLOR),
+    _has_smartcar_attitude(false),
+    _smartcar_attitude({}),
+    _weather_revision(0),
     _root(nullptr),
     _pages(nullptr),
     _page_dots({}),
@@ -74,19 +89,24 @@ HomeCareHub::HomeCareHub():
 {
 }
 
+// 析构时确保定时器释放，避免 LVGL 在应用销毁后继续回调悬空 this 指针。
 HomeCareHub::~HomeCareHub()
 {
     deleteTimer();
 }
 
+// 初始化 MQTT 桥接层，后续 UI 按钮和入站消息都通过该桥接层交互。
 bool HomeCareHub::init(void)
 {
     homecare_mqtt_bridge_init();
+    homecare_weather_service_init();
     return true;
 }
 
+// 应用进入前台时创建界面、设置初始模式，并启动自动演示与 MQTT 轮询定时器。
 bool HomeCareHub::run(void)
 {
+    // 读取 Brookesia 给应用分配的可视区域，异常尺寸时回退到设计稿分辨率。
     lv_area_t area = getVisualArea();
     _width = area.x2 > area.x1 ? area.x2 - area.x1 : 1024;
     _height = area.y2 > area.y1 ? area.y2 - area.y1 : 600;
@@ -99,17 +119,20 @@ bool HomeCareHub::run(void)
 
     createUi();
     setMode(MODE_NORMAL);
+    // _timer 负责周期切换演示场景，_mqtt_timer 高频轮询 MQTT 入站队列。
     _timer = lv_timer_create(timerCb, 6000, this);
     _mqtt_timer = lv_timer_create(timerCb, 1000, this);
     return true;
 }
 
+// 返回键交给系统核心处理，通知 Brookesia 当前应用请求关闭。
 bool HomeCareHub::back(void)
 {
     notifyCoreClosed();
     return true;
 }
 
+// 应用关闭时释放定时器和根容器，并清空缓存的 LVGL 对象指针。
 bool HomeCareHub::close(void)
 {
     deleteTimer();
@@ -122,6 +145,7 @@ bool HomeCareHub::close(void)
     return true;
 }
 
+// 统一删除本应用创建的 LVGL 定时器，重复调用也保持安全。
 void HomeCareHub::deleteTimer(void)
 {
     if (_timer != nullptr) {
@@ -134,36 +158,118 @@ void HomeCareHub::deleteTimer(void)
     }
 }
 
+// 创建带圆角、边框、渐变和阴影的通用面板，是三页大面板和内部卡片的基础样式。
 lv_obj_t *HomeCareHub::createPanel(lv_obj_t *parent, int32_t width, int32_t height, lv_color_t bg)
 {
     lv_obj_t *panel = lv_obj_create(parent);
     lv_obj_set_size(panel, width, height);
     lv_obj_set_style_bg_color(panel, bg, 0);
+    // 外层页面面板和内层信息卡使用不同渐变色，形成视觉层级。
+    const bool is_page_panel = lv_color_to32(bg) == lv_color_to32(HUB_PANEL_COLOR);
+    lv_obj_set_style_bg_grad_color(panel, is_page_panel ? HUB_PANEL_GRAD_COLOR : HUB_CARD_GRAD_COLOR, 0);
+    lv_obj_set_style_bg_grad_dir(panel, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_main_stop(panel, 28, 0);
+    lv_obj_set_style_bg_grad_stop(panel, 230, 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(panel, 1, 0);
-    lv_obj_set_style_border_color(panel, lv_color_hex(0x2D3A4C), 0);
+    lv_obj_set_style_border_color(panel, HUB_LINE_COLOR, 0);
+    lv_obj_set_style_border_opa(panel, LV_OPA_80, 0);
+    lv_obj_set_style_border_side(panel, LV_BORDER_SIDE_FULL, 0);
+    lv_obj_set_style_outline_width(panel, 1, 0);
+    lv_obj_set_style_outline_color(panel, lv_color_hex(0x0B1220), 0);
+    lv_obj_set_style_outline_opa(panel, LV_OPA_70, 0);
+    lv_obj_set_style_shadow_width(panel, 16, 0);
+    lv_obj_set_style_shadow_ofs_y(panel, 6, 0);
+    lv_obj_set_style_shadow_spread(panel, 0, 0);
+    lv_obj_set_style_shadow_color(panel, HUB_SHADOW_COLOR, 0);
+    lv_obj_set_style_shadow_opa(panel, LV_OPA_40, 0);
     lv_obj_set_style_radius(panel, 8, 0);
-    lv_obj_set_style_pad_all(panel, 12, 0);
+    lv_obj_set_style_pad_top(panel, 14, 0);
+    lv_obj_set_style_pad_bottom(panel, 14, 0);
+    lv_obj_set_style_pad_left(panel, 14, 0);
+    lv_obj_set_style_pad_right(panel, 14, 0);
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     return panel;
 }
 
+// 创建统一字体、颜色和省略模式的文本标签，长文本会以省略号收尾。
 lv_obj_t *HomeCareHub::createLabel(lv_obj_t *parent, const char *text, const lv_font_t *font, lv_color_t color)
 {
     lv_obj_t *label = lv_label_create(parent);
     lv_label_set_text(label, text);
     lv_obj_set_style_text_font(label, font, 0);
     lv_obj_set_style_text_color(label, color, 0);
+    lv_obj_set_style_text_letter_space(label, 0, 0);
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
     return label;
 }
 
+// 根据风险/状态颜色高亮卡片边框、外描边和阴影，便于快速识别异常区域。
 void HomeCareHub::setCardAccent(lv_obj_t *obj, lv_color_t color)
 {
     lv_obj_set_style_border_width(obj, 2, 0);
     lv_obj_set_style_border_color(obj, color, 0);
+    lv_obj_set_style_outline_color(obj, lv_color_mix(color, HUB_BG_COLOR, 96), 0);
+    lv_obj_set_style_shadow_color(obj, lv_color_mix(color, HUB_SHADOW_COLOR, 32), 0);
 }
 
+// 顶部状态栏样式：横向渐变、轻边框和浅阴影，用于承载标题与全局状态。
+void HomeCareHub::styleHeader(lv_obj_t *obj)
+{
+    lv_obj_set_style_bg_color(obj, lv_color_hex(0x132032), 0);
+    lv_obj_set_style_bg_grad_color(obj, lv_color_hex(0x1C3048), 0);
+    lv_obj_set_style_bg_grad_dir(obj, LV_GRAD_DIR_HOR, 0);
+    lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(obj, 1, 0);
+    lv_obj_set_style_border_color(obj, HUB_LINE_COLOR, 0);
+    lv_obj_set_style_border_opa(obj, LV_OPA_70, 0);
+    lv_obj_set_style_radius(obj, 8, 0);
+    lv_obj_set_style_pad_left(obj, 16, 0);
+    lv_obj_set_style_pad_right(obj, 16, 0);
+    lv_obj_set_style_pad_top(obj, 6, 0);
+    lv_obj_set_style_pad_bottom(obj, 6, 0);
+    lv_obj_set_style_shadow_width(obj, 14, 0);
+    lv_obj_set_style_shadow_ofs_y(obj, 5, 0);
+    lv_obj_set_style_shadow_color(obj, HUB_SHADOW_COLOR, 0);
+    lv_obj_set_style_shadow_opa(obj, LV_OPA_30, 0);
+    lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+// 按钮统一样式；filled=true 表示主操作按钮，false 表示次级模式按钮。
+void HomeCareHub::styleButton(lv_obj_t *obj, lv_color_t bg, bool filled)
+{
+    lv_obj_set_style_radius(obj, 7, 0);
+    lv_obj_set_style_bg_color(obj, filled ? bg : lv_color_hex(0x17283A), 0);
+    lv_obj_set_style_bg_grad_color(obj, filled ? lv_color_mix(lv_color_white(), bg, 36) : lv_color_hex(0x20364B), 0);
+    lv_obj_set_style_bg_grad_dir(obj, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(obj, 1, 0);
+    lv_obj_set_style_border_color(obj, filled ? lv_color_mix(lv_color_white(), bg, 56) : bg, 0);
+    lv_obj_set_style_shadow_width(obj, filled ? 10 : 6, 0);
+    lv_obj_set_style_shadow_ofs_y(obj, 4, 0);
+    lv_obj_set_style_shadow_color(obj, HUB_SHADOW_COLOR, 0);
+    lv_obj_set_style_shadow_opa(obj, filled ? LV_OPA_40 : LV_OPA_20, 0);
+    lv_obj_set_style_bg_color(obj, lv_color_mix(lv_color_black(), bg, 64), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_grad_color(obj, bg, LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_width(obj, 2, LV_STATE_PRESSED);
+    lv_obj_set_style_transform_height(obj, -1, LV_STATE_PRESSED);
+}
+
+// 进度条统一样式；主背景保持暗色，指示器使用传入颜色和横向高光渐变。
+void HomeCareHub::styleBar(lv_obj_t *obj, lv_color_t color)
+{
+    lv_obj_set_style_radius(obj, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(0x0F1A28), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(obj, HUB_LINE_COLOR, LV_PART_MAIN);
+    lv_obj_set_style_radius(obj, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(obj, color, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_grad_color(obj, lv_color_mix(lv_color_white(), color, 48), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_grad_dir(obj, LV_GRAD_DIR_HOR, LV_PART_INDICATOR);
+}
+
+// 根据当前页码刷新底部页码指示器，传入越界页码时自动夹紧。
 void HomeCareHub::updatePageIndicator(int page)
 {
     if (page < 0) {
@@ -176,6 +282,7 @@ void HomeCareHub::updatePageIndicator(int page)
         if (_page_dots[i] == nullptr) {
             continue;
         }
+        // 当前页拉长为胶囊形，其余页保持小圆点。
         const bool active = (i == page);
         lv_obj_set_size(_page_dots[i], active ? 22 : 8, 8);
         lv_obj_set_style_bg_color(_page_dots[i], active ? HUB_BLUE_COLOR : lv_color_hex(0x4B5563), 0);
@@ -183,24 +290,26 @@ void HomeCareHub::updatePageIndicator(int page)
     }
 }
 
+// 创建完整 HomeCareHub 界面：顶栏、三页横向面板、操作按钮和页码点。
 bool HomeCareHub::createUi(void)
 {
+    // 根容器铺满可视区域，使用暗色竖向渐变作为整个应用背景。
     _root = lv_obj_create(lv_scr_act());
     lv_obj_set_size(_root, _width, _height);
     lv_obj_align(_root, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(_root, HUB_BG_COLOR, 0);
+    lv_obj_set_style_bg_grad_color(_root, HUB_BG_GRAD_COLOR, 0);
+    lv_obj_set_style_bg_grad_dir(_root, LV_GRAD_DIR_VER, 0);
     lv_obj_set_style_border_width(_root, 0, 0);
     lv_obj_set_style_radius(_root, 0, 0);
     lv_obj_set_style_pad_all(_root, 14, 0);
     lv_obj_clear_flag(_root, LV_OBJ_FLAG_SCROLLABLE);
 
+    // 顶部栏显示应用名、当前模式、通信/AI 状态和隐私模式提示。
     lv_obj_t *top = lv_obj_create(_root);
     lv_obj_set_size(top, _width - 28, 58);
     lv_obj_align(top, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_opa(top, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(top, 0, 0);
-    lv_obj_set_style_pad_all(top, 0, 0);
-    lv_obj_clear_flag(top, LV_OBJ_FLAG_SCROLLABLE);
+    styleHeader(top);
 
     lv_obj_t *title = createLabel(top, "家庭终端", HUB_FONT_TITLE, HUB_TEXT_COLOR);
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 0, -8);
@@ -214,10 +323,12 @@ bool HomeCareHub::createUi(void)
     _privacy_label = createLabel(top, "隐私：仅 CSI 感知", HUB_FONT_BODY, HUB_GREEN_COLOR);
     lv_obj_align(_privacy_label, LV_ALIGN_RIGHT_MID, 0, 0);
 
+    // 内容区扣除顶部栏和底部页码点高度，三页共享同一尺寸。
     const int content_y = 72;
     const int page_w = _width - 28;
     const int page_h = _height - content_y - 44;
 
+    // 横向滚动容器负责三页之间的滑动和吸附。
     _pages = lv_obj_create(_root);
     lv_obj_set_size(_pages, page_w, page_h);
     lv_obj_align(_pages, LV_ALIGN_TOP_MID, 0, content_y);
@@ -235,6 +346,7 @@ bool HomeCareHub::createUi(void)
     lv_obj_set_flex_align(_pages, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_add_event_cb(_pages, scrollEventCb, LV_EVENT_SCROLL_END, this);
 
+    // 预先创建三个透明页面容器，后续每页内部再放置真实内容面板。
     std::array<lv_obj_t *, HUB_PAGE_COUNT> page_objs = {};
     for (int i = 0; i < HUB_PAGE_COUNT; ++i) {
         lv_obj_t *page = lv_obj_create(_pages);
@@ -248,6 +360,7 @@ bool HomeCareHub::createUi(void)
         page_objs[i] = page;
     }
 
+    // 第 1 页：居家区域感知，四张卡分别展示房间活动、风险等级和 CSI 强度。
     lv_obj_t *left = createPanel(page_objs[0], page_w, page_h, HUB_PANEL_COLOR);
     lv_obj_align(left, LV_ALIGN_TOP_LEFT, 0, 0);
     createLabel(left, "居家区域", HUB_FONT_HEAD, HUB_TEXT_COLOR);
@@ -257,6 +370,7 @@ bool HomeCareHub::createUi(void)
     const int room_card_w = (page_w - 24 - room_gap) / 2;
     const int room_card_h = (page_h - 78 - room_gap) / 2;
     for (int i = 0; i < 4; ++i) {
+        // 2x2 房间网格，索引 0/1 在第一行，2/3 在第二行。
         lv_obj_t *card = createPanel(left, room_card_w, room_card_h, HUB_PANEL_2_COLOR);
         lv_obj_align(card, LV_ALIGN_TOP_LEFT,
                      (i % 2) * (room_card_w + room_gap),
@@ -273,6 +387,7 @@ bool HomeCareHub::createUi(void)
         lv_obj_align(_room_csi_labels[i], LV_ALIGN_BOTTOM_RIGHT, 0, 0);
     }
 
+    // 第 2 页：巡检小车状态，包含位置、目标、阶段、电量、路线和四个操作按钮。
     lv_obj_t *center = createPanel(page_objs[1], page_w, page_h, HUB_PANEL_COLOR);
     lv_obj_align(center, LV_ALIGN_TOP_LEFT, 0, 0);
     createLabel(center, "巡检小车", HUB_FONT_HEAD, HUB_TEXT_COLOR);
@@ -292,8 +407,7 @@ bool HomeCareHub::createUi(void)
     lv_obj_set_size(_battery_bar, page_w - 150, 14);
     lv_obj_align(_battery_bar, LV_ALIGN_TOP_LEFT, 0, 198);
     lv_bar_set_range(_battery_bar, 0, 100);
-    lv_obj_set_style_bg_color(_battery_bar, lv_color_hex(0x334155), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(_battery_bar, HUB_GREEN_COLOR, LV_PART_INDICATOR);
+    styleBar(_battery_bar, HUB_GREEN_COLOR);
     _battery_label = createLabel(center, "86%", HUB_FONT_SMALL, HUB_TEXT_COLOR);
     lv_obj_align(_battery_label, LV_ALIGN_TOP_RIGHT, 0, 190);
 
@@ -303,8 +417,7 @@ bool HomeCareHub::createUi(void)
     lv_obj_set_size(_route_bar, page_w - 150, 14);
     lv_obj_align(_route_bar, LV_ALIGN_TOP_LEFT, 0, 250);
     lv_bar_set_range(_route_bar, 0, 100);
-    lv_obj_set_style_bg_color(_route_bar, lv_color_hex(0x334155), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(_route_bar, HUB_BLUE_COLOR, LV_PART_INDICATOR);
+    styleBar(_route_bar, HUB_BLUE_COLOR);
     _route_label = createLabel(center, "充电桩 > 走廊 > 点位", HUB_FONT_SMALL, HUB_MUTED_COLOR);
     lv_obj_align(_route_label, LV_ALIGN_TOP_LEFT, 0, 272);
 
@@ -325,53 +438,65 @@ bool HomeCareHub::createUi(void)
     lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
 
+    // 操作按钮的 user_data 保存动作编号，由 actionEventCb 统一解析并发布 MQTT 动作。
     const char *button_texts[] = {"巡检", "回充", "隐私", "呼叫"};
     for (int i = 0; i < 4; ++i) {
         lv_obj_t *btn = lv_btn_create(actions);
         lv_obj_set_size(btn, 120, 38);
-        lv_obj_set_style_radius(btn, 6, 0);
-        lv_obj_set_style_bg_color(btn, i == 2 ? HUB_PURPLE_COLOR : HUB_BLUE_COLOR, 0);
+        styleButton(btn, i == 2 ? HUB_PURPLE_COLOR : HUB_BLUE_COLOR, true);
         lv_obj_add_event_cb(btn, actionEventCb, LV_EVENT_CLICKED, this);
         lv_obj_set_user_data(btn, reinterpret_cast<void *>(static_cast<intptr_t>(i)));
         lv_obj_t *label = createLabel(btn, button_texts[i], HUB_FONT_SMALL, lv_color_white());
         lv_obj_center(label);
     }
 
+    // 第 3 页：天气、室内环境和事件记录，同时提供模式切换按钮。
     lv_obj_t *right = createPanel(page_objs[2], page_w, page_h, HUB_PANEL_COLOR);
     lv_obj_align(right, LV_ALIGN_TOP_LEFT, 0, 0);
-    const int info_gap = 16;
-    const int info_w = (page_w - 24 - info_gap) / 2;
+    // 左侧 42% 放天气/环境卡，右侧放事件列表，底部保留模式按钮区。
+    const int third_gap = 16;
+    const int third_action_h = 42;
+    const int third_content_h = page_h - third_action_h - third_gap;
+    const int third_left_w = (page_w - 24 - third_gap) * 42 / 100;
+    const int third_right_w = page_w - 24 - third_gap - third_left_w;
+    const int info_h = (third_content_h - third_gap) / 2;
 
-    lv_obj_t *weather = createPanel(right, info_w, 166, HUB_PANEL_2_COLOR);
+    // 天气卡展示户外天气、温度、湿度和空气质量。
+    lv_obj_t *weather = createPanel(right, third_left_w, info_h, HUB_PANEL_2_COLOR);
     lv_obj_align(weather, LV_ALIGN_TOP_LEFT, 0, 0);
     createLabel(weather, "天气", HUB_FONT_HEAD, HUB_TEXT_COLOR);
     _weather_label = createLabel(weather, "多云", HUB_FONT_TITLE, HUB_BLUE_COLOR);
     lv_obj_align(_weather_label, LV_ALIGN_TOP_LEFT, 0, 42);
     _outdoor_label = createLabel(weather, "室外 24C", HUB_FONT_BODY, HUB_TEXT_COLOR);
-    lv_obj_align(_outdoor_label, LV_ALIGN_TOP_LEFT, 0, 92);
+    lv_obj_align(_outdoor_label, LV_ALIGN_TOP_LEFT, 0, 100);
     _humidity_label = createLabel(weather, "湿度 58%", HUB_FONT_BODY, HUB_TEXT_COLOR);
-    lv_obj_align(_humidity_label, LV_ALIGN_TOP_LEFT, 170, 92);
+    lv_obj_align(_humidity_label, LV_ALIGN_TOP_LEFT, 0, 130);
     _air_label = createLabel(weather, "空气 良好", HUB_FONT_BODY, HUB_GREEN_COLOR);
-    lv_obj_align(_air_label, LV_ALIGN_TOP_LEFT, 0, 126);
+    lv_obj_align(_air_label, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
-    lv_obj_t *env = createPanel(right, info_w, 166, HUB_PANEL_2_COLOR);
-    lv_obj_align_to(env, weather, LV_ALIGN_OUT_RIGHT_TOP, info_gap, 0);
+    // 室内环境卡展示当前室内温湿度和夜间风险提示。
+    lv_obj_t *env = createPanel(right, third_left_w, info_h, HUB_PANEL_2_COLOR);
+    lv_obj_align_to(env, weather, LV_ALIGN_OUT_BOTTOM_LEFT, 0, third_gap);
     createLabel(env, "室内环境", HUB_FONT_HEAD, HUB_TEXT_COLOR);
     _indoor_label = createLabel(env, "室内 25C / 51%", HUB_FONT_BODY, HUB_TEXT_COLOR);
     lv_obj_align(_indoor_label, LV_ALIGN_TOP_LEFT, 0, 52);
     _night_label = createLabel(env, "夜间风险低", HUB_FONT_BODY, HUB_MUTED_COLOR);
-    lv_obj_set_width(_night_label, info_w - 28);
+    lv_obj_set_width(_night_label, third_left_w - 28);
     lv_obj_align(_night_label, LV_ALIGN_TOP_LEFT, 0, 92);
 
-    lv_obj_t *event_title = createLabel(right, "事件记录", HUB_FONT_HEAD, HUB_TEXT_COLOR);
-    lv_obj_align(event_title, LV_ALIGN_TOP_LEFT, 0, 196);
+    // 事件区域固定显示四条最近事件；MQTT 事件会覆盖第一条。
+    lv_obj_t *event_area = createPanel(right, third_right_w, third_content_h, HUB_PANEL_2_COLOR);
+    lv_obj_align_to(event_area, weather, LV_ALIGN_OUT_RIGHT_TOP, third_gap, 0);
+    lv_obj_t *event_title = createLabel(event_area, "事件记录", HUB_FONT_HEAD, HUB_TEXT_COLOR);
+    lv_obj_align(event_title, LV_ALIGN_TOP_LEFT, 0, 0);
 
     const int event_gap = 10;
-    const int event_w = page_w - 24;
-    const int event_h = (page_h - 284 - event_gap * 3) / 4;
+    const int event_w = third_right_w - 28;
+    const int event_h = (third_content_h - 56 - event_gap * 3) / 4;
     for (int i = 0; i < 4; ++i) {
-        lv_obj_t *event = createPanel(right, event_w, event_h, HUB_PANEL_2_COLOR);
-        lv_obj_align(event, LV_ALIGN_TOP_LEFT, 0, 232 + i * (event_h + event_gap));
+        // 每条事件拆成等级、时间和描述三段，便于按等级单独着色。
+        lv_obj_t *event = createPanel(event_area, event_w, event_h, HUB_PANEL_COLOR);
+        lv_obj_align(event, LV_ALIGN_TOP_LEFT, 0, 42 + i * (event_h + event_gap));
         _event_cards[i] = event;
         _event_level_labels[i] = createLabel(event, "L0", HUB_FONT_SMALL, HUB_GREEN_COLOR);
         lv_obj_align(_event_level_labels[i], LV_ALIGN_TOP_LEFT, 0, 0);
@@ -392,20 +517,19 @@ bool HomeCareHub::createUi(void)
     lv_obj_set_flex_align(modes, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(modes, LV_OBJ_FLAG_SCROLLABLE);
 
+    // 模式按钮的 user_data 保存 DemoMode 枚举值，点击后同步 UI 并发布 MQTT 模式。
     const char *mode_texts[] = {"正常", "跌倒", "浴室", "夜间"};
     for (int i = 0; i < MODE_MAX; ++i) {
         lv_obj_t *btn = lv_btn_create(modes);
         lv_obj_set_size(btn, 120, 36);
-        lv_obj_set_style_radius(btn, 6, 0);
-        lv_obj_set_style_bg_color(btn, HUB_PANEL_2_COLOR, 0);
-        lv_obj_set_style_border_width(btn, 1, 0);
-        lv_obj_set_style_border_color(btn, HUB_BLUE_COLOR, 0);
+        styleButton(btn, HUB_BLUE_COLOR, false);
         lv_obj_add_event_cb(btn, scenarioEventCb, LV_EVENT_CLICKED, this);
         lv_obj_set_user_data(btn, reinterpret_cast<void *>(static_cast<intptr_t>(i)));
         lv_obj_t *label = createLabel(btn, mode_texts[i], HUB_FONT_SMALL, HUB_TEXT_COLOR);
         lv_obj_center(label);
     }
 
+    // 底部页码点用于提示横向分页位置。
     lv_obj_t *dots = lv_obj_create(_root);
     lv_obj_set_size(dots, 86, 14);
     lv_obj_align(dots, LV_ALIGN_BOTTOM_MID, 0, -6);
@@ -417,6 +541,7 @@ bool HomeCareHub::createUi(void)
     lv_obj_clear_flag(dots, LV_OBJ_FLAG_SCROLLABLE);
 
     for (int i = 0; i < HUB_PAGE_COUNT; ++i) {
+        // 页码点本身不滚动，只由 scrollEventCb/updatePageIndicator 改变尺寸和颜色。
         lv_obj_t *dot = lv_obj_create(dots);
         lv_obj_set_size(dot, 8, 8);
         lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
@@ -430,12 +555,14 @@ bool HomeCareHub::createUi(void)
     return true;
 }
 
+// 切换本地演示模式，并立即用对应 DashboardState 刷新所有绑定控件。
 void HomeCareHub::setMode(DemoMode mode)
 {
     _mode = mode;
     updateUi();
 }
 
+// 将本地 DemoMode 转成 MQTT 协议使用的模式枚举。
 homecare_mqtt_mode_t HomeCareHub::toMqttMode(DemoMode mode) const
 {
     switch (mode) {
@@ -452,6 +579,7 @@ homecare_mqtt_mode_t HomeCareHub::toMqttMode(DemoMode mode) const
     }
 }
 
+// 将 MQTT 协议模式转回本地 DemoMode；未知值保持当前模式不变。
 HomeCareHub::DemoMode HomeCareHub::fromMqttMode(homecare_mqtt_mode_t mode) const
 {
     switch (mode) {
@@ -468,13 +596,20 @@ HomeCareHub::DemoMode HomeCareHub::fromMqttMode(homecare_mqtt_mode_t mode) const
     }
 }
 
+// 应用单条 MQTT 入站消息：可远程切换模式，也可插入最新事件。
 void HomeCareHub::applyMqttMessage(const HomeCareMqttInboundMessage &message)
 {
     if (message.has_mode) {
         _mode = fromMqttMode(message.mode);
     }
 
+    if (message.has_smartcar_attitude && message.smartcar_attitude.valid) {
+        _has_smartcar_attitude = true;
+        _smartcar_attitude = message.smartcar_attitude;
+    }
+
     if (message.type == HOMECARE_MQTT_INBOUND_EVENT) {
+        // 保存最新事件；空字段用默认值补齐，避免 UI 出现空白。
         _has_mqtt_event = true;
         _mqtt_event = message.event;
         if (_mqtt_event.level[0] == '\0') {
@@ -487,6 +622,7 @@ void HomeCareHub::applyMqttMessage(const HomeCareMqttInboundMessage &message)
             std::snprintf(_mqtt_event.text, sizeof(_mqtt_event.text), "MQTT message received");
         }
 
+        // 事件等级映射到卡片强调色，L3 最高风险，L0/未知按绿色展示。
         if (std::strcmp(_mqtt_event.level, "L3") == 0) {
             _mqtt_event_color = HUB_RED_COLOR;
         } else if (std::strcmp(_mqtt_event.level, "L2") == 0) {
@@ -501,6 +637,7 @@ void HomeCareHub::applyMqttMessage(const HomeCareMqttInboundMessage &message)
     updateUi();
 }
 
+// 从 MQTT 桥接队列中取尽当前所有入站消息，保证 UI 使用最新状态。
 void HomeCareHub::applyMqttMessages(void)
 {
     HomeCareMqttInboundMessage message = {};
@@ -509,8 +646,10 @@ void HomeCareHub::applyMqttMessages(void)
     }
 }
 
+// 根据当前模式的静态状态表和可选 MQTT 事件刷新全部界面控件。
 void HomeCareHub::updateUi(void)
 {
+    // 四个演示场景的完整仪表盘快照：全局状态、环境、小车、房间和事件。
     const DashboardState states[MODE_MAX] = {
         {
             "正常巡检", "WiFi-CSI 在线 | 本地 AI 就绪", "隐私：仅 CSI 感知",
@@ -586,6 +725,7 @@ void HomeCareHub::updateUi(void)
         },
     };
 
+    // 先选择当前模式对应的快照，再逐个写入 LVGL 标签、进度条和卡片样式。
     const DashboardState &state = states[_mode];
     lv_label_set_text(_mode_label, state.mode_name);
     lv_obj_set_style_text_color(_mode_label, _mode == MODE_FALL ? HUB_RED_COLOR : (_mode == MODE_BATHROOM ? HUB_ORANGE_COLOR : HUB_GREEN_COLOR), 0);
@@ -600,6 +740,29 @@ void HomeCareHub::updateUi(void)
     lv_label_set_text(_indoor_label, state.indoor_env);
     lv_label_set_text(_night_label, state.night_hint);
 
+    HomeCareWeatherSnapshot weather_snapshot = {};
+    if (homecare_weather_service_get_snapshot(&weather_snapshot)) {
+        lv_label_set_text(_weather_label, weather_snapshot.weather);
+        lv_label_set_text(_outdoor_label, weather_snapshot.outdoor_temp);
+        lv_label_set_text(_humidity_label, weather_snapshot.humidity);
+        lv_label_set_text(_air_label, weather_snapshot.air_quality);
+        lv_obj_set_style_text_color(_weather_label,
+                                    weather_snapshot.has_live_data ? HUB_BLUE_COLOR : HUB_MUTED_COLOR, 0);
+        lv_color_t air_color = HUB_MUTED_COLOR;
+        if (weather_snapshot.air_quality_level == 1) {
+            air_color = HUB_GREEN_COLOR;
+        } else if (weather_snapshot.air_quality_level == 2) {
+            air_color = HUB_BLUE_COLOR;
+        } else if (weather_snapshot.air_quality_level == 3) {
+            air_color = HUB_YELLOW_COLOR;
+        } else if (weather_snapshot.air_quality_level >= 4) {
+            air_color = HUB_RED_COLOR;
+        }
+        lv_obj_set_style_text_color(_air_label, air_color, 0);
+        _weather_revision = weather_snapshot.revision;
+    }
+
+    // 刷新巡检小车区域：状态文字、路径、电量和路线进度。
     lv_label_set_text(_car_status_label, state.car_status);
     lv_obj_set_style_text_color(_car_status_label, _mode == MODE_FALL ? HUB_RED_COLOR : (_mode == MODE_BATHROOM ? HUB_ORANGE_COLOR : HUB_GREEN_COLOR), 0);
     lv_label_set_text_fmt(_car_position_label, "位置：%s", state.car_position);
@@ -613,7 +776,26 @@ void HomeCareHub::updateUi(void)
     lv_bar_set_value(_route_bar, state.route_progress, LV_ANIM_ON);
     lv_label_set_text_fmt(_route_label, "%s > %s", state.car_position, state.car_target);
 
+    if (_has_smartcar_attitude && _smartcar_attitude.valid) {
+        lv_label_set_text(_car_status_label, "姿态回传中");
+        lv_obj_set_style_text_color(_car_status_label, HUB_BLUE_COLOR, 0);
+        lv_label_set_text(_car_position_label, "位置：MQTT 实时上报");
+        lv_label_set_text(_car_target_label, "目标：smartcar/attitude");
+        lv_label_set_text(_car_phase_label,
+                          _smartcar_attitude.has_mag ? "阶段：姿态+磁航向在线" : "阶段：姿态在线");
+        if (_smartcar_attitude.timestamp_ms > 0) {
+            lv_label_set_text_fmt(_obstacle_label, "时间戳：%lld", _smartcar_attitude.timestamp_ms);
+        } else {
+            lv_label_set_text(_obstacle_label, "时间戳：MQTT");
+        }
+        lv_label_set_text_fmt(_sensor_label, "传感器：r=%.2f p=%.2f y=%.2f",
+                              _smartcar_attitude.roll_deg,
+                              _smartcar_attitude.pitch_deg,
+                              _smartcar_attitude.yaw_deg);
+    }
+
     for (int i = 0; i < 4; ++i) {
+        // 刷新四个房间卡：名称、活动说明、风险等级、CSI 百分比和强调色。
         const RoomState &room = state.rooms[i];
         lv_label_set_text(_room_name_labels[i], room.name);
         lv_label_set_text_fmt(_room_activity_labels[i], "%s%s", room.activity, room.privacy_zone ? " | 私密" : "");
@@ -624,6 +806,7 @@ void HomeCareHub::updateUi(void)
     }
 
     for (int i = 0; i < 4; ++i) {
+        // 刷新四条预设事件，并按事件等级颜色设置卡片强调样式。
         const EventState &event = state.events[i];
         lv_label_set_text(_event_level_labels[i], event.level);
         lv_label_set_text(_event_time_labels[i], event.time);
@@ -633,6 +816,7 @@ void HomeCareHub::updateUi(void)
     }
 
     if (_has_mqtt_event) {
+        // 如果收到过 MQTT 事件，则用最新外部事件覆盖事件列表第一条。
         lv_label_set_text(_event_level_labels[0], _mqtt_event.level);
         lv_label_set_text(_event_time_labels[0], _mqtt_event.time);
         lv_label_set_text(_event_text_labels[0], _mqtt_event.text);
@@ -641,6 +825,7 @@ void HomeCareHub::updateUi(void)
     }
 }
 
+// 模式按钮回调：读取按钮上保存的模式编号，切换 UI 并发布模式到 MQTT。
 void HomeCareHub::scenarioEventCb(lv_event_t *e)
 {
     HomeCareHub *app = static_cast<HomeCareHub *>(lv_event_get_user_data(e));
@@ -652,6 +837,7 @@ void HomeCareHub::scenarioEventCb(lv_event_t *e)
     }
 }
 
+// 操作按钮回调：发布巡检、回充、隐私切换、呼叫家人等动作。
 void HomeCareHub::actionEventCb(lv_event_t *e)
 {
     HomeCareHub *app = static_cast<HomeCareHub *>(lv_event_get_user_data(e));
@@ -659,27 +845,33 @@ void HomeCareHub::actionEventCb(lv_event_t *e)
         return;
     }
     lv_obj_t *btn = static_cast<lv_obj_t *>(lv_event_get_target(e));
+    // 动作编号来自 createUi() 中写入按钮 user_data 的索引。
     int action = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(btn)));
 
     if (action == 0) {
+        // 巡检：发布巡检动作，并回到正常演示场景。
         homecare_mqtt_bridge_publish_action(HOMECARE_MQTT_ACTION_PATROL);
         app->setMode(MODE_NORMAL);
     } else if (action == 1) {
+        // 回充：发布回充动作，并立即给 UI 一个本地反馈。
         homecare_mqtt_bridge_publish_action(HOMECARE_MQTT_ACTION_RECHARGE);
         app->setMode(MODE_NORMAL);
         lv_label_set_text(app->_car_status_label, "回充中");
         lv_label_set_text(app->_car_phase_label, "阶段：回充指令");
         lv_bar_set_value(app->_route_bar, 30, LV_ANIM_ON);
     } else if (action == 3) {
+        // 呼叫：通知外部系统呼叫家人，同时更新语音状态。
         homecare_mqtt_bridge_publish_action(HOMECARE_MQTT_ACTION_CALL_FAMILY);
         lv_label_set_text(app->_voice_label, "语音：呼叫家人");
     } else {
+        // 隐私：切换本地隐私标志，并发布给外部系统同步。
         homecare_mqtt_bridge_publish_action(HOMECARE_MQTT_ACTION_PRIVACY_TOGGLE);
         app->_privacy_enabled = !app->_privacy_enabled;
         app->updateUi();
     }
 }
 
+// 横向分页滚动结束后，根据 scroll_x 计算当前页并刷新底部页码点。
 void HomeCareHub::scrollEventCb(lv_event_t *e)
 {
     HomeCareHub *app = static_cast<HomeCareHub *>(lv_event_get_user_data(e));
@@ -693,10 +885,12 @@ void HomeCareHub::scrollEventCb(lv_event_t *e)
         return;
     }
 
+    // 加 stride/2 实现四舍五入到最近页，而不是简单向下取整。
     int page = (lv_obj_get_scroll_x(app->_pages) + stride / 2) / stride;
     app->updatePageIndicator(page);
 }
 
+// LVGL 定时器共用回调：MQTT 定时器处理消息，演示定时器循环切换场景。
 void HomeCareHub::timerCb(lv_timer_t *timer)
 {
     HomeCareHub *app = static_cast<HomeCareHub *>(timer->user_data);
@@ -705,8 +899,14 @@ void HomeCareHub::timerCb(lv_timer_t *timer)
     }
     if (timer == app->_mqtt_timer) {
         app->applyMqttMessages();
+        HomeCareWeatherSnapshot weather_snapshot = {};
+        if (homecare_weather_service_get_snapshot(&weather_snapshot) &&
+            weather_snapshot.revision != app->_weather_revision) {
+            app->updateUi();
+        }
         return;
     }
+    // 非 MQTT 定时器即演示轮播定时器，按枚举顺序进入下一个场景。
     int next = (static_cast<int>(app->_mode) + 1) % MODE_MAX;
     app->setMode(static_cast<DemoMode>(next));
 }

@@ -65,6 +65,7 @@ private:
     void updateUiByNvsParam(void);
     // WiFi
     esp_err_t initWifi(void);
+    bool ensureWifiTaskStarted(void);
     void startWifiScan(void);
     void stopWifiScan(void);
     void scanWifiAndUpdateUi(void);

@@ -2,6 +2,7 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static bool topic_has_suffix(const char *topic, int topic_len, const char *suffix)
@@ -65,13 +66,11 @@ static void copy_text(char *dest, size_t dest_size, const char *src, size_t src_
     dest[len] = '\0';
 }
 
-static bool json_extract_string(const char *payload, int payload_len, const char *key,
-                                char *out, size_t out_size)
+static const char *json_find_value_start(const char *payload, int payload_len, const char *key)
 {
-    if (payload == nullptr || key == nullptr || out == nullptr || out_size == 0 || payload_len <= 0) {
-        return false;
+    if (payload == nullptr || key == nullptr || payload_len <= 0) {
+        return nullptr;
     }
-    out[0] = '\0';
 
     char pattern[40] = {};
     snprintf(pattern, sizeof(pattern), "\"%s\"", key);
@@ -82,7 +81,7 @@ static bool json_extract_string(const char *payload, int payload_len, const char
     while (cursor + pattern_len < end) {
         const char *match = static_cast<const char *>(memchr(cursor, '"', end - cursor));
         if (match == nullptr || match + pattern_len > end) {
-            return false;
+            return nullptr;
         }
         if (strncmp(match, pattern, pattern_len) != 0) {
             cursor = match + 1;
@@ -91,44 +90,332 @@ static bool json_extract_string(const char *payload, int payload_len, const char
 
         const char *colon = static_cast<const char *>(memchr(match + pattern_len, ':', end - (match + pattern_len)));
         if (colon == nullptr) {
-            return false;
+            return nullptr;
         }
+
         const char *value = colon + 1;
         while (value < end && isspace(static_cast<unsigned char>(*value))) {
             ++value;
         }
-        if (value >= end || *value != '"') {
-            return false;
-        }
-        ++value;
+        return value < end ? value : nullptr;
+    }
 
-        size_t written = 0;
-        bool escape = false;
-        while (value < end) {
-            const char ch = *value++;
-            if (escape) {
-                if (written + 1 < out_size) {
-                    out[written++] = ch;
-                }
-                escape = false;
-                continue;
-            }
-            if (ch == '\\') {
-                escape = true;
-                continue;
-            }
-            if (ch == '"') {
-                out[written] = '\0';
-                return true;
-            }
+    return nullptr;
+}
+
+static bool json_extract_string(const char *payload, int payload_len, const char *key,
+                                char *out, size_t out_size)
+{
+    if (payload == nullptr || key == nullptr || out == nullptr || out_size == 0 || payload_len <= 0) {
+        return false;
+    }
+    out[0] = '\0';
+    const char *end = payload + payload_len;
+    const char *value = json_find_value_start(payload, payload_len, key);
+    if (value == nullptr || *value != '"') {
+        return false;
+    }
+    ++value;
+
+    size_t written = 0;
+    bool escape = false;
+    while (value < end) {
+        const char ch = *value++;
+        if (escape) {
             if (written + 1 < out_size) {
                 out[written++] = ch;
             }
+            escape = false;
+            continue;
         }
-        return false;
+        if (ch == '\\') {
+            escape = true;
+            continue;
+        }
+        if (ch == '"') {
+            out[written] = '\0';
+            return true;
+        }
+        if (written + 1 < out_size) {
+            out[written++] = ch;
+        }
     }
 
     return false;
+}
+
+static bool json_extract_bool(const char *payload, int payload_len, const char *key, bool *out)
+{
+    if (payload == nullptr || key == nullptr || out == nullptr || payload_len <= 0) {
+        return false;
+    }
+    const char *end = payload + payload_len;
+    const char *value = json_find_value_start(payload, payload_len, key);
+    if (value == nullptr) {
+        return false;
+    }
+
+    if ((end - value) >= 4 && strncmp(value, "true", 4) == 0) {
+        *out = true;
+        return true;
+    }
+    if ((end - value) >= 5 && strncmp(value, "false", 5) == 0) {
+        *out = false;
+        return true;
+    }
+
+    return false;
+}
+
+static bool json_extract_float(const char *payload, int payload_len, const char *key, float *out)
+{
+    if (payload == nullptr || key == nullptr || out == nullptr || payload_len <= 0) {
+        return false;
+    }
+
+    const char *value = json_find_value_start(payload, payload_len, key);
+    if (value == nullptr) {
+        return false;
+    }
+
+    char number[32] = {};
+    size_t written = 0;
+    const char *end = payload + payload_len;
+    while (value < end && written + 1 < sizeof(number)) {
+        const char ch = *value;
+        if (!(isdigit(static_cast<unsigned char>(ch)) || ch == '-' || ch == '+' || ch == '.')) {
+            break;
+        }
+        number[written++] = ch;
+        ++value;
+    }
+    if (written == 0) {
+        return false;
+    }
+
+    char *parse_end = nullptr;
+    const float parsed = strtof(number, &parse_end);
+    if (parse_end == number) {
+        return false;
+    }
+
+    *out = parsed;
+    return true;
+}
+
+static bool json_extract_i64(const char *payload, int payload_len, const char *key, long long *out)
+{
+    if (payload == nullptr || key == nullptr || out == nullptr || payload_len <= 0) {
+        return false;
+    }
+
+    const char *value = json_find_value_start(payload, payload_len, key);
+    if (value == nullptr) {
+        return false;
+    }
+
+    char number[32] = {};
+    size_t written = 0;
+    const char *end = payload + payload_len;
+    while (value < end && written + 1 < sizeof(number)) {
+        const char ch = *value;
+        if (!(isdigit(static_cast<unsigned char>(ch)) || ch == '-' || ch == '+')) {
+            break;
+        }
+        number[written++] = ch;
+        ++value;
+    }
+    if (written == 0) {
+        return false;
+    }
+
+    char *parse_end = nullptr;
+    const long long parsed = strtoll(number, &parse_end, 10);
+    if (parse_end == number) {
+        return false;
+    }
+
+    *out = parsed;
+    return true;
+}
+
+static const char *smartcar_command_level(const char *field, const char *value)
+{
+    if (field == nullptr || value == nullptr) {
+        return "L1";
+    }
+
+    const size_t field_len = strlen(field);
+    const size_t value_len = strlen(value);
+    if (text_equals(value, value_len, "pause") ||
+        text_equals(value, value_len, "stop") ||
+        text_equals(value, value_len, "off") ||
+        text_equals(value, value_len, "drive:stop")) {
+        return "L2";
+    }
+
+    if (text_equals(field, field_len, "run") && text_equals(value, value_len, "false")) {
+        return "L2";
+    }
+
+    return "L1";
+}
+
+static bool parse_smartcar_command_payload(const char *payload, int payload_len,
+                                           HomeCareMqttInboundMessage *out)
+{
+    if (payload == nullptr || out == nullptr || payload_len < 0) {
+        return false;
+    }
+
+    char request_id[HOMECARE_MQTT_FIELD_MAX_LEN] = {};
+    char value[HOMECARE_MQTT_TEXT_MAX_LEN] = {};
+    const char *field = nullptr;
+
+    json_extract_string(payload, payload_len, "requestId", request_id, sizeof(request_id));
+
+    if (json_extract_string(payload, payload_len, "nav", value, sizeof(value))) {
+        field = "nav";
+    } else if (json_extract_string(payload, payload_len, "action", value, sizeof(value))) {
+        field = "action";
+    } else if (json_extract_string(payload, payload_len, "switch", value, sizeof(value))) {
+        field = "switch";
+    } else if (json_extract_string(payload, payload_len, "drive", value, sizeof(value))) {
+        field = "drive";
+    } else if (json_extract_string(payload, payload_len, "move", value, sizeof(value))) {
+        field = "move";
+    } else if (json_extract_string(payload, payload_len, "motion", value, sizeof(value))) {
+        field = "motion";
+    } else if (json_extract_string(payload, payload_len, "cmd", value, sizeof(value))) {
+        field = "cmd";
+    } else {
+        bool run = false;
+        if (json_extract_bool(payload, payload_len, "run", &run)) {
+            field = "run";
+            copy_text(value, sizeof(value), run ? "true" : "false", run ? 4 : 5);
+        } else {
+            size_t start = 0;
+            const size_t trimmed_len = trim_bounds(payload, static_cast<size_t>(payload_len), &start);
+            if (trimmed_len == 0) {
+                return false;
+            }
+            field = "raw";
+            copy_text(value, sizeof(value), payload + start, trimmed_len);
+        }
+    }
+
+    out->type = HOMECARE_MQTT_INBOUND_EVENT;
+    const char *level = smartcar_command_level(field, value);
+    copy_text(out->event.level, sizeof(out->event.level), level, strlen(level));
+    if (request_id[0] != '\0') {
+        copy_text(out->event.time, sizeof(out->event.time), request_id, strlen(request_id));
+    } else {
+        copy_text(out->event.time, sizeof(out->event.time), "MQTT", 4);
+    }
+
+    if (text_equals(field, strlen(field), "raw")) {
+        snprintf(out->event.text, sizeof(out->event.text), "Smart car %s", value);
+    } else {
+        snprintf(out->event.text, sizeof(out->event.text), "Smart car %s %s", field, value);
+    }
+    return true;
+}
+
+static bool parse_smartcar_attitude_payload(const char *payload, int payload_len,
+                                            HomeCareMqttInboundMessage *out)
+{
+    if (payload == nullptr || out == nullptr || payload_len < 0) {
+        return false;
+    }
+
+    float roll = 0.0f;
+    float pitch = 0.0f;
+    float yaw = 0.0f;
+    bool has_mag = false;
+    bool mag = false;
+    long long ts_ms = 0;
+    bool has_ts = false;
+
+    if (!json_extract_float(payload, payload_len, "r", &roll) ||
+        !json_extract_float(payload, payload_len, "p", &pitch) ||
+        !json_extract_float(payload, payload_len, "y", &yaw)) {
+        return false;
+    }
+    has_mag = json_extract_bool(payload, payload_len, "mag", &mag);
+    has_ts = json_extract_i64(payload, payload_len, "ts", &ts_ms);
+
+    out->type = HOMECARE_MQTT_INBOUND_EVENT;
+    out->has_smartcar_attitude = true;
+    out->smartcar_attitude.valid = true;
+    out->smartcar_attitude.roll_deg = roll;
+    out->smartcar_attitude.pitch_deg = pitch;
+    out->smartcar_attitude.yaw_deg = yaw;
+    out->smartcar_attitude.has_mag = has_mag ? mag : false;
+    out->smartcar_attitude.timestamp_ms = has_ts ? ts_ms : 0;
+
+    copy_text(out->event.level, sizeof(out->event.level), "L1", 2);
+    if (has_ts) {
+        snprintf(out->event.time, sizeof(out->event.time), "%lld", ts_ms);
+    } else {
+        copy_text(out->event.time, sizeof(out->event.time), "MQTT", 4);
+    }
+    snprintf(out->event.text, sizeof(out->event.text),
+             "Smart car attitude r=%.2f p=%.2f y=%.2f mag=%s",
+             roll, pitch, yaw, (has_mag && mag) ? "on" : "off");
+    return true;
+}
+
+static bool parse_generic_event_payload(const char *payload, int payload_len,
+                                        HomeCareMqttInboundMessage *out)
+{
+    if (payload == nullptr || out == nullptr || payload_len < 0) {
+        return false;
+    }
+
+    char text[HOMECARE_MQTT_TEXT_MAX_LEN] = {};
+    char time[HOMECARE_MQTT_FIELD_MAX_LEN] = {};
+    char level[HOMECARE_MQTT_FIELD_MAX_LEN] = {};
+    long long ts_ms = 0;
+
+    bool has_text = false;
+    has_text |= json_extract_string(payload, payload_len, "text", text, sizeof(text));
+    if (!has_text) {
+        has_text |= json_extract_string(payload, payload_len, "message", text, sizeof(text));
+    }
+    if (!has_text) {
+        has_text |= json_extract_string(payload, payload_len, "status", text, sizeof(text));
+    }
+    if (!has_text) {
+        has_text |= json_extract_string(payload, payload_len, "state", text, sizeof(text));
+    }
+    if (!has_text) {
+        size_t start = 0;
+        const size_t trimmed_len = trim_bounds(payload, static_cast<size_t>(payload_len), &start);
+        if (trimmed_len == 0) {
+            return false;
+        }
+        copy_text(text, sizeof(text), payload + start, trimmed_len);
+        has_text = true;
+    }
+
+    out->type = HOMECARE_MQTT_INBOUND_EVENT;
+    if (!json_extract_string(payload, payload_len, "level", level, sizeof(level))) {
+        copy_text(level, sizeof(level), "L1", 2);
+    }
+    copy_text(out->event.level, sizeof(out->event.level), level, strlen(level));
+
+    if (json_extract_string(payload, payload_len, "time", time, sizeof(time))) {
+        copy_text(out->event.time, sizeof(out->event.time), time, strlen(time));
+    } else if (json_extract_i64(payload, payload_len, "ts", &ts_ms)) {
+        snprintf(out->event.time, sizeof(out->event.time), "%lld", ts_ms);
+    } else {
+        copy_text(out->event.time, sizeof(out->event.time), "MQTT", 4);
+    }
+
+    if (has_text) {
+        copy_text(out->event.text, sizeof(out->event.text), text, strlen(text));
+    }
+    return true;
 }
 
 homecare_mqtt_mode_t homecare_mqtt_mode_from_text(const char *text, size_t len)
@@ -184,6 +471,7 @@ bool homecare_mqtt_parse_inbound(const char *topic, int topic_len,
 
     memset(out, 0, sizeof(*out));
     out->mode = HOMECARE_MQTT_MODE_UNKNOWN;
+    copy_text(out->topic, sizeof(out->topic), topic, static_cast<size_t>(topic_len));
 
     if (topic_has_suffix(topic, topic_len, "/event")) {
         out->type = HOMECARE_MQTT_INBOUND_EVENT;
@@ -219,7 +507,15 @@ bool homecare_mqtt_parse_inbound(const char *topic, int topic_len,
         return out->has_mode;
     }
 
-    return false;
+    if (topic_has_suffix(topic, topic_len, "/attitude") || strcmp(out->topic, "smartcar/attitude") == 0) {
+        return parse_smartcar_attitude_payload(payload, payload_len, out);
+    }
+
+    if (topic_has_suffix(topic, topic_len, "/cmd")) {
+        return parse_smartcar_command_payload(payload, payload_len, out);
+    }
+
+    return parse_generic_event_payload(payload, payload_len, out);
 }
 
 static const char *action_to_text(homecare_mqtt_action_t action)

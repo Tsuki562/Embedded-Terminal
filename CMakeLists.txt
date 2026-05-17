@@ -9,6 +9,7 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 set(EXTRA_COMPONENT_DIRS "")
 set(PROJECT_COMMON_COMPONENT_DIR_CANDIDATES
+    "${CMAKE_CURRENT_LIST_DIR}/common_components"
     "${CMAKE_CURRENT_LIST_DIR}/../common_components"
     "${CMAKE_CURRENT_LIST_DIR}/../esp-dev-kits-master/esp-dev-kits-master/examples/esp32-p4-function-ev-board/examples/common_components"
 )

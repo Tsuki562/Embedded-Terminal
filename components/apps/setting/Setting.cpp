@@ -9,7 +9,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_err.h"
-#include "esp_wifi.h"
+#include "SettingWifiRemoteCompat.hpp"
 #include "esp_check.h"
 #include "esp_memory_utils.h"
 #include "esp_mac.h"
@@ -75,6 +75,8 @@ static const char TAG[] = "EUI_Setting";
 TaskHandle_t wifi_scan_handle_task;
 
 static EventGroupHandle_t s_wifi_event_group;
+static esp_netif_t *s_wifi_sta_netif = nullptr;
+static esp_event_handler_instance_t s_wifi_event_instance_any_id = nullptr;
 
 static char st_wifi_ssid[32];
 static char st_wifi_password[64];
@@ -200,12 +202,27 @@ bool AppSettings::init(void)
     _nvs_param_map[NVS_KEY_DISPLAY_BRIGHTNESS] = max(min((int)_nvs_param_map[NVS_KEY_DISPLAY_BRIGHTNESS], SCREEN_BRIGHTNESS_MAX), SCREEN_BRIGHTNESS_MIN);
     // Load NVS parameters if exist
     loadNvsParam();
+    // Wi-Fi on this board is manual-only. Do not auto-reenable the hosted link
+    // on boot just because a previous session left the switch enabled.
+    if (_nvs_param_map[NVS_KEY_WIFI_ENABLE] != 0) {
+        _nvs_param_map[NVS_KEY_WIFI_ENABLE] = false;
+        setNvsParam(NVS_KEY_WIFI_ENABLE, 0);
+    }
     // Update System parameters
     bsp_extra_codec_volume_set(_nvs_param_map[NVS_KEY_AUDIO_VOLUME], (int *)&_nvs_param_map[NVS_KEY_AUDIO_VOLUME]);
     bsp_display_brightness_set(_nvs_param_map[NVS_KEY_DISPLAY_BRIGHTNESS]);
 
+    if (s_wifi_event_group == nullptr) {
+        s_wifi_event_group = xEventGroupCreate();
+        if (s_wifi_event_group == nullptr) {
+            ESP_LOGE(TAG, "Create Wi-Fi event group failed");
+            return false;
+        }
+    }
+    xEventGroupClearBits(s_wifi_event_group, WIFI_EVENT_CONNECTED | WIFI_EVENT_INIT_DONE |
+                                             WIFI_EVENT_UI_INIT_DONE | WIFI_EVENT_SCANING);
+
     xTaskCreate(euiRefresTask, "Home Refresh", HOME_REFRESH_TASK_STACK_SIZE, this, HOME_REFRESH_TASK_PRIORITY, NULL);
-    xTaskCreate(wifiScanTask, "WiFi Scan", WIFI_SCAN_TASK_STACK_SIZE, this, WIFI_SCAN_TASK_PRIORITY, NULL);
 
     return true;
 }
@@ -474,35 +491,79 @@ void AppSettings::updateUiByNvsParam(void)
 
 esp_err_t AppSettings::initWifi()
 {
-    s_wifi_event_group = xEventGroupCreate();
-    xEventGroupClearBits(s_wifi_event_group, WIFI_EVENT_CONNECTED);
-    xEventGroupClearBits(s_wifi_event_group, WIFI_EVENT_INIT_DONE);
-    xEventGroupClearBits(s_wifi_event_group, WIFI_EVENT_SCANING);
-    if(!(xEventGroupGetBits(s_wifi_event_group) & WIFI_EVENT_UI_INIT_DONE)) {
-        xEventGroupClearBits(s_wifi_event_group, WIFI_EVENT_UI_INIT_DONE);
+    if (s_wifi_event_group == nullptr) {
+        s_wifi_event_group = xEventGroupCreate();
+        if (s_wifi_event_group == nullptr) {
+            return ESP_ERR_NO_MEM;
+        }
     }
+    xEventGroupClearBits(s_wifi_event_group, WIFI_EVENT_CONNECTED | WIFI_EVENT_INIT_DONE | WIFI_EVENT_SCANING);
 
-    ESP_ERROR_CHECK(esp_netif_init());
+    esp_err_t ret = esp_netif_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_netif_init failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
     esp_err_t event_loop_ret = esp_event_loop_create_default();
     if (event_loop_ret != ESP_OK && event_loop_ret != ESP_ERR_INVALID_STATE) {
         return event_loop_ret;
     }
-    esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
-    assert(sta_netif);
+    if (s_wifi_sta_netif == nullptr) {
+        s_wifi_sta_netif = esp_netif_create_default_wifi_sta();
+        if (s_wifi_sta_netif == nullptr) {
+            ESP_LOGE(TAG, "Create default Wi-Fi STA netif failed");
+            return ESP_FAIL;
+        }
+    }
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ret = esp_wifi_init(&cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_init failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
 
-    esp_event_handler_instance_t instance_any_id;
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
-                                                        ESP_EVENT_ANY_ID,
-                                                        &wifiEventHandler,
-                                                        this,
-                                                        &instance_any_id));
+    if (s_wifi_event_instance_any_id == nullptr) {
+        ret = esp_event_handler_instance_register(WIFI_EVENT,
+                                                  ESP_EVENT_ANY_ID,
+                                                  &wifiEventHandler,
+                                                  this,
+                                                  &s_wifi_event_instance_any_id);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Register Wi-Fi event handler failed: %s", esp_err_to_name(ret));
+            return ret;
+        }
+    }
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    ret = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_set_mode failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ret = esp_wifi_start();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_start failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
 
     return ESP_OK;
+}
+
+bool AppSettings::ensureWifiTaskStarted(void)
+{
+    if (wifi_scan_handle_task != nullptr) {
+        return true;
+    }
+
+    BaseType_t ret = xTaskCreate(wifiScanTask, "WiFi Scan", WIFI_SCAN_TASK_STACK_SIZE, this,
+                                 WIFI_SCAN_TASK_PRIORITY, &wifi_scan_handle_task);
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "Create Wi-Fi scan task failed");
+        wifi_scan_handle_task = nullptr;
+        return false;
+    }
+
+    return true;
 }
 
 void AppSettings::startWifiScan(void)
@@ -517,6 +578,11 @@ void AppSettings::stopWifiScan(void)
 {
     ESP_LOGI(TAG, "Stop Wi-Fi scan");
     xEventGroupClearBits(s_wifi_event_group, WIFI_EVENT_SCANING);
+    esp_err_t ret = esp_wifi_scan_stop();
+    if ((ret != ESP_OK) && (ret != ESP_ERR_WIFI_STATE) &&
+        (ret != ESP_ERR_WIFI_NOT_INIT) && (ret != ESP_ERR_WIFI_NOT_STARTED)) {
+        ESP_LOGW(TAG, "esp_wifi_scan_stop failed: %s", esp_err_to_name(ret));
+    }
     lv_obj_add_flag(ui_PanelScreenSettingWiFiList, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(ui_SpinnerScreenSettingWiFi, LV_OBJ_FLAG_HIDDEN);
     deinitWifiListButton();
@@ -525,16 +591,40 @@ void AppSettings::stopWifiScan(void)
 void AppSettings::scanWifiAndUpdateUi(void)
 {
     bool psk_flag = false;
+    esp_err_t ret = ESP_OK;
 
     uint16_t number = SCAN_LIST_SIZE;
     wifi_ap_record_t ap_info[SCAN_LIST_SIZE];
     uint16_t ap_count = 0;
     memset(ap_info, 0, sizeof(ap_info));
 
-    esp_wifi_start();
-    esp_wifi_scan_start(NULL, true);
-    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
-    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, ap_info));
+    ret = esp_wifi_start();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_start before scan failed: %s", esp_err_to_name(ret));
+        stopWifiScan();
+        return;
+    }
+
+    ret = esp_wifi_scan_start(NULL, true);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_scan_start failed: %s", esp_err_to_name(ret));
+        stopWifiScan();
+        return;
+    }
+
+    ret = esp_wifi_scan_get_ap_num(&ap_count);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_scan_get_ap_num failed: %s", esp_err_to_name(ret));
+        stopWifiScan();
+        return;
+    }
+
+    ret = esp_wifi_scan_get_ap_records(&number, ap_info);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_scan_get_ap_records failed: %s", esp_err_to_name(ret));
+        stopWifiScan();
+        return;
+    }
 #if ENABLE_DEBUG_LOG
     ESP_LOGI(TAG, "Total APs scanned = %u", ap_count);
 #endif
@@ -700,7 +790,18 @@ void AppSettings::wifiScanTask(void *arg)
 
     ret = app->initWifi();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Init Wi-Fi failed");
+        ESP_LOGE(TAG, "Init Wi-Fi failed: %s", esp_err_to_name(ret));
+        xEventGroupClearBits(s_wifi_event_group, WIFI_EVENT_CONNECTED | WIFI_EVENT_INIT_DONE | WIFI_EVENT_SCANING);
+        app->_nvs_param_map[NVS_KEY_WIFI_ENABLE] = false;
+        app->setNvsParam(NVS_KEY_WIFI_ENABLE, 0);
+        if (!app->_is_ui_del) {
+            esp_lv_adapter_lock(-1);
+            lv_obj_add_flag(ui_PanelScreenSettingWiFiList, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(ui_SpinnerScreenSettingWiFi, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_state(ui_SwitchPanelScreenSettingWiFiSwitch, LV_STATE_CHECKED);
+            app->status_bar->setWifiIconState(0);
+            esp_lv_adapter_unlock();
+        }
         goto err;
     }
 
@@ -728,6 +829,7 @@ void AppSettings::wifiScanTask(void *arg)
     }
 
 err:
+    wifi_scan_handle_task = nullptr;
     vTaskDelete(NULL);
 }
 
@@ -735,6 +837,9 @@ void AppSettings::wifiConnectTask(void *arg)
 {
     AppSettings *app = (AppSettings *)arg;
     wifi_config_t wifi_config = { 0 };
+    esp_err_t ret = ESP_OK;
+    bool connect_ready = false;
+    EventBits_t bits = 0;
 
     esp_wifi_disconnect();
     app->status_bar->setWifiIconState(0);
@@ -745,19 +850,33 @@ void AppSettings::wifiConnectTask(void *arg)
     memcpy(wifi_config.sta.ssid, st_wifi_ssid, sizeof(wifi_config.sta.ssid));
     memcpy(wifi_config.sta.password, st_wifi_password, sizeof(wifi_config.sta.password));
 
-    ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
+    ret = esp_wifi_start();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_start before connect failed: %s", esp_err_to_name(ret));
+    } else {
+        ret = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "esp_wifi_set_config failed: %s", esp_err_to_name(ret));
+        } else {
+            ESP_LOGI(TAG, "SSID:%s, password:%s.", wifi_config.sta.ssid, wifi_config.sta.password);
+            ret = esp_wifi_connect();
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(ret));
+            } else {
+                connect_ready = true;
+            }
+        }
+    }
 
-    ESP_LOGI(TAG, "SSID:%s, password:%s.", wifi_config.sta.ssid, wifi_config.sta.password);
-    esp_wifi_connect();
+    if (connect_ready) {
+        bits = xEventGroupWaitBits(s_wifi_event_group,
+                WIFI_EVENT_CONNECTED,
+                pdFALSE,
+                pdFALSE,
+                pdMS_TO_TICKS(WIFI_CONNECT_RET_WAIT_TIME_MS));
+    }
 
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
-            WIFI_EVENT_CONNECTED,
-            pdFALSE,
-            pdFALSE,
-            pdMS_TO_TICKS(WIFI_CONNECT_RET_WAIT_TIME_MS));
-
-    if (bits & WIFI_EVENT_CONNECTED) {
+    if (connect_ready && (bits & WIFI_EVENT_CONNECTED)) {
         ESP_LOGI(TAG, "Connected successfully");
 
         if (!app->_is_ui_del) {
@@ -773,7 +892,9 @@ void AppSettings::wifiConnectTask(void *arg)
             app->processWifiConnect(WIFI_CONNECT_HIDE);
             // lv_obj_clear_flag(ui_KeyboardScreenSettingVerification, LV_OBJ_FLAG_HIDDEN);
             lv_textarea_set_text(ui_TextAreaScreenSettingVerificationPassword, "");
-            app->back();
+            app->stopWifiScan();
+            // Return to the main settings page so the Wi-Fi scan loop stays off while MQTT starts.
+            lv_scr_load(ui_ScreenSettingMain);
             esp_lv_adapter_unlock();
         }
 
@@ -876,10 +997,6 @@ void AppSettings::onScreenLoadEventCallback( lv_event_t * e)
         app->stopWifiScan();
     }
 
-    if ((app->_screen_index == UI_WIFI_SCAN_INDEX) && (app->_nvs_param_map[NVS_KEY_WIFI_ENABLE] == true)) {
-        app->startWifiScan();
-    }
-
 end:
     return;
 }
@@ -894,6 +1011,9 @@ void AppSettings::onSwitchPanelScreenSettingWiFiSwitchValueChangeEventCallback( 
         app->_nvs_param_map[NVS_KEY_WIFI_ENABLE] = true;
         app->setNvsParam(NVS_KEY_WIFI_ENABLE, 1);
         if (app->_screen_index == UI_WIFI_SCAN_INDEX) {
+            if (!app->ensureWifiTaskStarted()) {
+                goto end;
+            }
             app->startWifiScan();
         }
     } else {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <array>
 #include "lvgl.h"
 #include "esp_brookesia.hpp"
@@ -77,6 +78,9 @@ private:
     lv_obj_t *createPanel(lv_obj_t *parent, int32_t width, int32_t height, lv_color_t bg);
     lv_obj_t *createLabel(lv_obj_t *parent, const char *text, const lv_font_t *font, lv_color_t color);
     void setCardAccent(lv_obj_t *obj, lv_color_t color);
+    void styleHeader(lv_obj_t *obj);
+    void styleButton(lv_obj_t *obj, lv_color_t bg, bool filled);
+    void styleBar(lv_obj_t *obj, lv_color_t color);
 
     static void scenarioEventCb(lv_event_t *e);
     static void actionEventCb(lv_event_t *e);
@@ -92,6 +96,9 @@ private:
     bool _has_mqtt_event;
     HomeCareMqttEvent _mqtt_event;
     lv_color_t _mqtt_event_color;
+    bool _has_smartcar_attitude;
+    HomeCareMqttSmartCarAttitude _smartcar_attitude;
+    uint32_t _weather_revision;
 
     lv_obj_t *_root;
     lv_obj_t *_pages;

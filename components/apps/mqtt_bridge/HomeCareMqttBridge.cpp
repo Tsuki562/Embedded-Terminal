@@ -14,11 +14,31 @@
 #include "mqtt_client.h"
 
 #ifndef CONFIG_HOMECARE_MQTT_BROKER_URI
-#define CONFIG_HOMECARE_MQTT_BROKER_URI "mqtts://test.mosquitto.org:8886"
+#define CONFIG_HOMECARE_MQTT_BROKER_URI "mqtts://x3a5a71f.ala.cn-hangzhou.emqxsl.cn:8883"
 #endif
 
 #ifndef CONFIG_HOMECARE_MQTT_CLIENT_ID
-#define CONFIG_HOMECARE_MQTT_CLIENT_ID "esp-brookesia-homecare"
+#define CONFIG_HOMECARE_MQTT_CLIENT_ID "123"
+#endif
+
+#ifndef CONFIG_HOMECARE_MQTT_USERNAME
+#define CONFIG_HOMECARE_MQTT_USERNAME "wsh"
+#endif
+
+#ifndef CONFIG_HOMECARE_MQTT_PASSWORD
+#define CONFIG_HOMECARE_MQTT_PASSWORD "wsh040428"
+#endif
+
+#ifndef CONFIG_HOMECARE_MQTT_INBOUND_CMD_TOPIC
+#define CONFIG_HOMECARE_MQTT_INBOUND_CMD_TOPIC "smartcar/cmd"
+#endif
+
+#ifndef CONFIG_HOMECARE_MQTT_INBOUND_SMARTCAR_DATA_TOPIC
+#define CONFIG_HOMECARE_MQTT_INBOUND_SMARTCAR_DATA_TOPIC "smartcar/attitude"
+#endif
+
+#ifndef CONFIG_HOMECARE_MQTT_INBOUND_AUX_TOPIC
+#define CONFIG_HOMECARE_MQTT_INBOUND_AUX_TOPIC ""
 #endif
 
 #ifndef CONFIG_HOMECARE_MQTT_BASE_TOPIC
@@ -87,6 +107,20 @@ static void stop_client_if_started(void)
     }
 }
 
+static void subscribe_topic_if_set(esp_mqtt_client_handle_t client, const char *topic_filter)
+{
+    if (client == nullptr || topic_filter == nullptr || topic_filter[0] == '\0') {
+        return;
+    }
+
+    const int mid = esp_mqtt_client_subscribe(client, topic_filter, 1);
+    if (mid < 0) {
+        ESP_LOGW(TAG, "subscribe %s failed", topic_filter);
+    } else {
+        ESP_LOGI(TAG, "subscribed: %s", topic_filter);
+    }
+}
+
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
                                int32_t event_id, void *event_data)
 {
@@ -103,9 +137,12 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         s_connected = true;
         char topic[128] = {};
         build_topic(topic, sizeof(topic), "in/#");
-        esp_mqtt_client_subscribe(event->client, topic, 1);
+        subscribe_topic_if_set(event->client, topic);
         build_topic(topic, sizeof(topic), "cmd/#");
-        esp_mqtt_client_subscribe(event->client, topic, 1);
+        subscribe_topic_if_set(event->client, topic);
+        subscribe_topic_if_set(event->client, CONFIG_HOMECARE_MQTT_INBOUND_CMD_TOPIC);
+        subscribe_topic_if_set(event->client, CONFIG_HOMECARE_MQTT_INBOUND_SMARTCAR_DATA_TOPIC);
+        subscribe_topic_if_set(event->client, CONFIG_HOMECARE_MQTT_INBOUND_AUX_TOPIC);
         build_topic(topic, sizeof(topic), "out/status");
         esp_mqtt_client_publish(event->client, topic, "{\"status\":\"online\"}", 0, 1, 1);
         ESP_LOGI(TAG, "MQTT connected and subscribed");
@@ -165,10 +202,17 @@ esp_err_t homecare_mqtt_bridge_init(void)
 
     esp_mqtt_client_config_t mqtt_cfg = {};
     mqtt_cfg.broker.address.uri = CONFIG_HOMECARE_MQTT_BROKER_URI;
+    mqtt_cfg.session.protocol_ver = MQTT_PROTOCOL_V_5;
 #if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
     mqtt_cfg.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
 #endif
     mqtt_cfg.credentials.client_id = CONFIG_HOMECARE_MQTT_CLIENT_ID;
+    if (CONFIG_HOMECARE_MQTT_USERNAME[0] != '\0') {
+        mqtt_cfg.credentials.username = CONFIG_HOMECARE_MQTT_USERNAME;
+    }
+    if (CONFIG_HOMECARE_MQTT_PASSWORD[0] != '\0') {
+        mqtt_cfg.credentials.authentication.password = CONFIG_HOMECARE_MQTT_PASSWORD;
+    }
     mqtt_cfg.session.last_will.topic = CONFIG_HOMECARE_MQTT_BASE_TOPIC "/out/status";
     mqtt_cfg.session.last_will.msg = "{\"status\":\"offline\"}";
     mqtt_cfg.session.last_will.qos = 1;

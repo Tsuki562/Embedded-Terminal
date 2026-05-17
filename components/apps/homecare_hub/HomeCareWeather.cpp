@@ -1,4 +1,5 @@
 #include "HomeCareWeather.hpp"
+#include "HomeCareWeatherCity.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -8,9 +9,11 @@
 #include "esp_check.h"
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
+#include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -51,7 +54,18 @@ struct ParsedWeatherData {
 static SemaphoreHandle_t s_lock = nullptr;
 static TaskHandle_t s_task = nullptr;
 static bool s_initialized = false;
+static volatile bool s_network_ready = false;
 static HomeCareWeatherSnapshot s_snapshot = {};
+
+static void log_internal_dma_heap(const char *label)
+{
+    ESP_LOGI(TAG, "%s: dma_free=%u dma_largest=%u internal_free=%u internal_largest=%u",
+             label,
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+}
 
 static void set_loading_snapshot(HomeCareWeatherSnapshot *snapshot)
 {
@@ -62,6 +76,7 @@ static void set_loading_snapshot(HomeCareWeatherSnapshot *snapshot)
     snapshot->has_live_data = false;
     snapshot->stale = false;
     snapshot->air_quality_level = 0;
+    std::snprintf(snapshot->city, sizeof(snapshot->city), "%s", homecare_weather_city_get_selected_name());
     std::snprintf(snapshot->weather, sizeof(snapshot->weather), "获取中");
     std::snprintf(snapshot->outdoor_temp, sizeof(snapshot->outdoor_temp), "室外 --");
     std::snprintf(snapshot->humidity, sizeof(snapshot->humidity), "湿度 --");
@@ -73,6 +88,7 @@ static bool snapshots_equal(const HomeCareWeatherSnapshot &lhs, const HomeCareWe
     return lhs.has_live_data == rhs.has_live_data &&
            lhs.stale == rhs.stale &&
            lhs.air_quality_level == rhs.air_quality_level &&
+           std::strcmp(lhs.city, rhs.city) == 0 &&
            std::strcmp(lhs.weather, rhs.weather) == 0 &&
            std::strcmp(lhs.outdoor_temp, rhs.outdoor_temp) == 0 &&
            std::strcmp(lhs.humidity, rhs.humidity) == 0 &&
@@ -210,15 +226,22 @@ static const char *air_quality_text_from_level(uint8_t level)
 static void build_weather_urls(char *forecast_url, size_t forecast_size,
                                char *air_url, size_t air_size)
 {
+    const char *latitude = nullptr;
+    const char *longitude = nullptr;
+    if (!homecare_weather_city_get_selected_coordinates(&latitude, &longitude)) {
+        latitude = CONFIG_HOMECARE_WEATHER_LATITUDE;
+        longitude = CONFIG_HOMECARE_WEATHER_LONGITUDE;
+    }
+
     if (forecast_url != nullptr && forecast_size > 0) {
         std::snprintf(forecast_url, forecast_size,
                       "https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s&current=temperature_2m,relative_humidity_2m,weather_code,is_day&forecast_days=1&timezone=auto",
-                      CONFIG_HOMECARE_WEATHER_LATITUDE, CONFIG_HOMECARE_WEATHER_LONGITUDE);
+                      latitude, longitude);
     }
     if (air_url != nullptr && air_size > 0) {
         std::snprintf(air_url, air_size,
                       "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=%s&longitude=%s&current=us_aqi&timezone=auto",
-                      CONFIG_HOMECARE_WEATHER_LATITUDE, CONFIG_HOMECARE_WEATHER_LONGITUDE);
+                      latitude, longitude);
     }
 }
 
@@ -344,6 +367,7 @@ static void build_snapshot_from_parsed(const ParsedWeatherData &parsed, HomeCare
     snapshot->has_live_data = true;
     snapshot->stale = false;
     snapshot->air_quality_level = parsed.has_air_quality ? air_quality_level_from_aqi(parsed.us_aqi) : 0;
+    std::snprintf(snapshot->city, sizeof(snapshot->city), "%s", homecare_weather_city_get_selected_name());
     std::snprintf(snapshot->weather, sizeof(snapshot->weather), "%s",
                   weather_code_to_text(parsed.weather_code, parsed.is_day));
     std::snprintf(snapshot->outdoor_temp, sizeof(snapshot->outdoor_temp), "室外 %dC", parsed.temperature_c);
@@ -361,11 +385,14 @@ static void update_snapshot_if_unavailable(void)
         return;
     }
 
-    if (!s_snapshot.has_live_data) {
+    const char *selected_city = homecare_weather_city_get_selected_name();
+    const bool city_changed = std::strcmp(s_snapshot.city, selected_city) != 0;
+    if (!s_snapshot.has_live_data || city_changed) {
         HomeCareWeatherSnapshot offline = s_snapshot;
         offline.has_live_data = false;
         offline.stale = true;
         offline.air_quality_level = 0;
+        std::snprintf(offline.city, sizeof(offline.city), "%s", selected_city);
         std::snprintf(offline.weather, sizeof(offline.weather), "离线");
         std::snprintf(offline.outdoor_temp, sizeof(offline.outdoor_temp), "室外 --");
         std::snprintf(offline.humidity, sizeof(offline.humidity), "湿度 --");
@@ -386,6 +413,7 @@ static esp_err_t fetch_and_update_snapshot(void)
 
     build_weather_urls(forecast_url, sizeof(forecast_url), air_url, sizeof(air_url));
 
+    log_internal_dma_heap("before weather forecast fetch");
     ESP_RETURN_ON_ERROR(http_get_json(forecast_url, forecast_json, sizeof(forecast_json)),
                         TAG, "fetch forecast failed");
     ESP_RETURN_ON_FALSE(parse_weather_json(forecast_json, &parsed), ESP_FAIL,
@@ -405,6 +433,14 @@ static esp_err_t fetch_and_update_snapshot(void)
         xSemaphoreGive(s_lock);
     }
 
+    ESP_LOGI(TAG, "weather updated: %s | %s | %s | %s | %s%s",
+             next_snapshot.city,
+             next_snapshot.weather,
+             next_snapshot.outdoor_temp,
+             next_snapshot.humidity,
+             next_snapshot.air_quality,
+             parsed.has_air_quality ? "" : " (AQI unavailable)");
+
     return ESP_OK;
 }
 
@@ -416,10 +452,22 @@ static void weather_task(void *arg)
     bool network_ready = false;
 
     for (;;) {
+        network_ready = s_network_ready;
         TickType_t wait_ticks = network_ready ? refresh_ticks : portMAX_DELAY;
         if (ulTaskNotifyTake(pdTRUE, wait_ticks) > 0) {
-            network_ready = true;
+            network_ready = s_network_ready;
         } else if (!network_ready) {
+            continue;
+        }
+
+        if (!network_ready) {
+            continue;
+        }
+
+        // MQTT also starts on GOT_IP. Give its TLS handshake a short head start
+        // so weather HTTPS does not contend for scarce internal DMA-capable RAM.
+        vTaskDelay(pdMS_TO_TICKS(15000));
+        if (!s_network_ready) {
             continue;
         }
 
@@ -436,6 +484,12 @@ static void network_event_handler(void *handler_args, esp_event_base_t event_bas
     (void)event_data;
 
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        s_network_ready = true;
+        if (s_task != nullptr) {
+            xTaskNotifyGive(s_task);
+        }
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        s_network_ready = false;
         if (s_task != nullptr) {
             xTaskNotifyGive(s_task);
         }
@@ -457,6 +511,7 @@ esp_err_t homecare_weather_service_init(void)
     // The weather task resolves DNS as soon as it is notified, so make sure
     // lwIP/tcpip is initialized before any HTTP work can start.
     ESP_RETURN_ON_ERROR(esp_netif_init(), TAG, "init netif failed");
+    ESP_RETURN_ON_ERROR(homecare_weather_city_init(), TAG, "init weather city failed");
 
     esp_err_t err = esp_event_loop_create_default();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
@@ -473,6 +528,9 @@ esp_err_t homecare_weather_service_init(void)
     ESP_RETURN_ON_ERROR(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
                                                             network_event_handler, nullptr, nullptr),
                         TAG, "register ip event failed");
+    ESP_RETURN_ON_ERROR(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED,
+                                                            network_event_handler, nullptr, nullptr),
+                        TAG, "register wifi event failed");
 
     if (xTaskCreate(weather_task, "homecare_weather", kTaskStackSize, nullptr,
                     kTaskPriority, &s_task) != pdPASS) {
@@ -481,6 +539,26 @@ esp_err_t homecare_weather_service_init(void)
 
     s_initialized = true;
     ESP_LOGI(TAG, "weather service initialized");
+    return ESP_OK;
+#endif
+}
+
+esp_err_t homecare_weather_service_request_refresh(void)
+{
+#if !CONFIG_HOMECARE_WEATHER_ENABLE
+    return ESP_OK;
+#else
+    if (!s_initialized || s_task == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!s_network_ready) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!s_snapshot.has_live_data && !s_snapshot.stale) {
+        return ESP_OK;
+    }
+
+    xTaskNotifyGive(s_task);
     return ESP_OK;
 #endif
 }

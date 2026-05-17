@@ -2,11 +2,18 @@ $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $scriptDir)))
-$sourcePath = Join-Path $repoRoot "components/apps/homecare_hub/HomeCareHub.cpp"
+$sourcePaths = @(
+    (Join-Path $repoRoot "components/apps/homecare_hub/HomeCareHub.cpp"),
+    (Join-Path $repoRoot "components/apps/homecare_hub/HomeCareWeather.cpp"),
+    (Join-Path $repoRoot "components/apps/homecare_hub/HomeCareWeatherCity.cpp"),
+    (Join-Path $repoRoot "components/apps/setting/Setting.cpp")
+)
 $fontPath = Join-Path $repoRoot "managed_components/lvgl__lvgl/scripts/built_in_font/SimSun.woff"
 
-if (-not (Test-Path -LiteralPath $sourcePath)) {
-    throw "HomeCareHub source not found: $sourcePath"
+foreach ($sourcePath in $sourcePaths) {
+    if (-not (Test-Path -LiteralPath $sourcePath)) {
+        throw "Font source not found: $sourcePath"
+    }
 }
 if (-not (Test-Path -LiteralPath $fontPath)) {
     throw "SimSun font not found: $fontPath"
@@ -73,15 +80,18 @@ function Get-CppStringLiteralText {
     return $result.ToString()
 }
 
-$source = Get-Content -LiteralPath $sourcePath -Raw -Encoding UTF8
-$stringText = Get-CppStringLiteralText $source
+$stringText = ""
+foreach ($sourcePath in $sourcePaths) {
+    $source = Get-Content -LiteralPath $sourcePath -Raw -Encoding UTF8
+    $stringText += Get-CppStringLiteralText $source
+}
 $symbols = [regex]::Matches($stringText, '[\p{IsCJKUnifiedIdeographs}\u3000-\u303F\uFF00-\uFFEF]') |
     ForEach-Object { $_.Value } |
     Sort-Object -Unique
 $symbolText = $symbols -join ''
 
 if (-not $symbolText) {
-    throw "No CJK symbols found in $sourcePath"
+    throw "No CJK symbols found in font source files"
 }
 
 foreach ($size in 14, 16, 20, 28) {

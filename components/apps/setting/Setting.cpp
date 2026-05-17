@@ -5,6 +5,7 @@
  */
 
 #include <cmath>
+#include <cstdint>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -21,6 +22,8 @@
 #include "ui/ui.h"
 #include "Setting.hpp"
 #include "app_sntp.h"
+#include "homecare_hub/HomeCareWeather.hpp"
+#include "homecare_hub/HomeCareWeatherCity.hpp"
 
 #include "esp_brookesia_versions.h"
 #include "esp_lv_adapter.h"
@@ -65,6 +68,7 @@
 #define UI_WIFI_ICON_LOCK_RIGHT_OFFSET       (-10)
 #define UI_WIFI_ICON_SIGNAL_RIGHT_OFFSET     (-50)
 #define UI_WIFI_ICON_CONNECT_RIGHT_OFFSET    (-90)
+#define WEATHER_CITY_LIST_SIZE               (48)
 
 using namespace std;
 
@@ -89,8 +93,14 @@ static lv_obj_t* label_wifi_ssid[SCAN_LIST_SIZE];
 static lv_obj_t* img_img_wifi_lock[SCAN_LIST_SIZE];
 static lv_obj_t* wifi_image[SCAN_LIST_SIZE];
 static lv_obj_t* wifi_connect[SCAN_LIST_SIZE];
+static lv_obj_t* weather_city_btn[WEATHER_CITY_LIST_SIZE];
+static lv_obj_t* weather_city_label[WEATHER_CITY_LIST_SIZE];
 
 static int brightness;
+
+LV_FONT_DECLARE(homecare_font_simsun_16);
+LV_FONT_DECLARE(homecare_font_simsun_20);
+LV_FONT_DECLARE(homecare_font_simsun_28);
 
 LV_IMG_DECLARE(img_wifisignal_absent);
 LV_IMG_DECLARE(img_wifisignal_wake);
@@ -114,8 +124,15 @@ extern lv_obj_t *ui_Sec;
 extern lv_obj_t *ui_Date;
 extern lv_obj_t *ui_Clock_Number;
 
+static void applyChineseFont(lv_obj_t *obj, const lv_font_t *font)
+{
+    if (obj != nullptr && font != nullptr) {
+        lv_obj_set_style_text_font(obj, font, LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+}
+
 AppSettings::AppSettings():
-    ESP_Brookesia_PhoneApp("Settings", &img_app_setting, false),                  // auto_resize_visual_area
+    ESP_Brookesia_PhoneApp("Settings", &img_app_setting, true),                   // auto_resize_visual_area
     _is_ui_resumed(false),
     _is_ui_del(true),
     _screen_index(UI_MAIN_SETTING_INDEX),
@@ -202,6 +219,9 @@ bool AppSettings::init(void)
     _nvs_param_map[NVS_KEY_DISPLAY_BRIGHTNESS] = max(min((int)_nvs_param_map[NVS_KEY_DISPLAY_BRIGHTNESS], SCREEN_BRIGHTNESS_MAX), SCREEN_BRIGHTNESS_MIN);
     // Load NVS parameters if exist
     loadNvsParam();
+    if (homecare_weather_city_init() != ESP_OK) {
+        ESP_LOGW(TAG, "Init weather city list failed, fallback to default city");
+    }
     // Wi-Fi on this board is manual-only. Do not auto-reenable the hosted link
     // on boot just because a previous session left the switch enabled.
     if (_nvs_param_map[NVS_KEY_WIFI_ENABLE] != 0) {
@@ -244,6 +264,8 @@ bool AppSettings::resume(void)
 void AppSettings::extraUiInit(void)
 {
     /* Main */
+    lv_label_set_text(ui_LabelPanelSettingMainContainer2Blue, "天气城市");
+    applyChineseFont(ui_LabelPanelSettingMainContainer2Blue, &homecare_font_simsun_20);
     lv_label_set_text(ui_LabelPanelSettingMainContainer3Volume, "Audio");
     lv_label_set_text(ui_LabelPanelSettingMainContainer4Light, "Display");
     lv_obj_align_to(ui_LabelPanelSettingMainContainer1WiFi, ui_ImagePanelSettingMainContainer1WiFi, LV_ALIGN_OUT_RIGHT_MID,
@@ -256,6 +278,8 @@ void AppSettings::extraUiInit(void)
                     UI_MAIN_ITEM_LEFT_OFFSET, 0);
     lv_obj_align_to(ui_LabelPanelSettingMainContainer5About, ui_ImagePanelSettingMainContainer5About, LV_ALIGN_OUT_RIGHT_MID,
                     UI_MAIN_ITEM_LEFT_OFFSET, 0);
+    lv_obj_add_flag(ui_ImagePanelSettingMainContainer2Blue, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_align(ui_LabelPanelSettingMainContainer2Blue, LV_ALIGN_LEFT_MID, 22, 0);
     // Record the screen index and install the screen loaded event callback
     _screen_list[UI_MAIN_SETTING_INDEX] = ui_ScreenSettingMain;
     lv_obj_add_event_cb(ui_ScreenSettingMain, onScreenLoadEventCallback, LV_EVENT_SCREEN_LOADED, this);
@@ -334,10 +358,8 @@ void AppSettings::extraUiInit(void)
     _screen_list[UI_WIFI_CONNECT_INDEX] = ui_ScreenSettingVerification;
     lv_obj_add_event_cb(ui_ScreenSettingVerification, onScreenLoadEventCallback, LV_EVENT_SCREEN_LOADED, this);
 
-    /* Bluetooth */
-    lv_obj_add_event_cb(ui_SwitchPanelScreenSettingBLESwitch, onSwitchPanelScreenSettingBLESwitchValueChangeEventCallback,
-                        LV_EVENT_VALUE_CHANGED, this);
-    // Record the screen index and install the screen loaded event callback
+    /* Weather City */
+    initWeatherCityUi();
     _screen_list[UI_BLUETOOTH_SETTING_INDEX] = ui_ScreenSettingBLE;
     lv_obj_add_event_cb(ui_ScreenSettingBLE, onScreenLoadEventCallback, LV_EVENT_SCREEN_LOADED, this);
 
@@ -366,7 +388,7 @@ void AppSettings::extraUiInit(void)
     _screen_list[UI_ABOUT_SETTING_INDEX] = ui_ScreenSettingAbout;
     lv_obj_add_event_cb(ui_ScreenSettingAbout, onScreenLoadEventCallback, LV_EVENT_SCREEN_LOADED, this);
 
-    lv_obj_add_flag(ui_PanelSettingMainContainerItem2, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(ui_PanelSettingMainContainerItem2, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(ui_LabelPanelPanelScreenSettingAbout3, mac_str);
     lv_label_set_text(ui_LabelPanelPanelScreenSettingAbout5, "v0.2.0");
     lv_label_set_text(ui_LabelPanelPanelScreenSettingAbout2, "ESP32-P4-Function-EV-Board");
@@ -487,6 +509,7 @@ void AppSettings::updateUiByNvsParam(void)
 
     lv_slider_set_value(ui_SliderPanelScreenSettingLightSwitch1, _nvs_param_map[NVS_KEY_DISPLAY_BRIGHTNESS], LV_ANIM_OFF);
     lv_slider_set_value(ui_SliderPanelScreenSettingVolumeSwitch, _nvs_param_map[NVS_KEY_AUDIO_VOLUME], LV_ANIM_OFF);
+    updateWeatherCityUi();
 }
 
 esp_err_t AppSettings::initWifi()
@@ -547,6 +570,101 @@ esp_err_t AppSettings::initWifi()
     }
 
     return ESP_OK;
+}
+
+void AppSettings::initWeatherCityUi(void)
+{
+    lv_obj_add_flag(ui_ImagePanelScreenSettingBLESwitch, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ui_PanelScreenSettingBLESwitch, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ui_SwitchPanelScreenSettingBLESwitch, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ui_PanelScreenSettingBLEList, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ui_SpinnerScreenSettingBLE, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ui_ButtonScreenSettingBLEReturn, LV_OBJ_FLAG_HIDDEN);
+
+    lv_label_set_text(ui_LabelPanelScreenSettingBLESwitch, "天气城市");
+    applyChineseFont(ui_LabelPanelScreenSettingBLESwitch, &homecare_font_simsun_28);
+    lv_obj_align(ui_LabelPanelScreenSettingBLESwitch, LV_ALIGN_LEFT_MID, 22, 0);
+    lv_obj_clear_flag(ui_PanelScreenSettingBLESwitch, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(ui_PanelScreenSettingBLEList, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_set_scroll_dir(ui_PanelScreenSettingBLEList, LV_DIR_VER);
+    lv_obj_set_width(ui_PanelScreenSettingBLEList, lv_pct(90));
+    lv_obj_set_height(ui_PanelScreenSettingBLEList, lv_pct(70));
+    lv_obj_align_to(ui_PanelScreenSettingBLEList, ui_PanelScreenSettingBLESwitch, LV_ALIGN_OUT_BOTTOM_MID, 0,
+                    UI_WIFI_LIST_UP_OFFSET);
+    lv_obj_set_style_pad_all(ui_PanelScreenSettingBLEList, 0, 0);
+    lv_obj_set_style_pad_top(ui_PanelScreenSettingBLEList, UI_WIFI_LIST_UP_PAD, 0);
+    lv_obj_set_style_pad_bottom(ui_PanelScreenSettingBLEList, UI_WIFI_LIST_DOWN_PAD, 0);
+    lv_obj_set_flex_flow(ui_PanelScreenSettingBLEList, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(ui_PanelScreenSettingBLEList, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+    const size_t city_count = homecare_weather_city_count();
+    const size_t visible_count = city_count < WEATHER_CITY_LIST_SIZE ? city_count : WEATHER_CITY_LIST_SIZE;
+    for (size_t i = 0; i < visible_count; ++i) {
+        const HomeCareWeatherCity *city = homecare_weather_city_get(i);
+        if (city == nullptr) {
+            continue;
+        }
+
+        weather_city_btn[i] = lv_btn_create(ui_PanelScreenSettingBLEList);
+        lv_obj_set_width(weather_city_btn[i], lv_pct(100));
+        lv_obj_set_height(weather_city_btn[i], 56);
+        lv_obj_set_style_radius(weather_city_btn[i], 0, 0);
+        lv_obj_set_style_border_width(weather_city_btn[i], 0, 0);
+        lv_obj_set_style_bg_color(weather_city_btn[i], lv_color_hex(0xCBCBCB), LV_PART_MAIN | LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(weather_city_btn[i], 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+        weather_city_label[i] = lv_label_create(weather_city_btn[i]);
+        lv_label_set_text_fmt(weather_city_label[i], "%s", city->name);
+        applyChineseFont(weather_city_label[i], &homecare_font_simsun_20);
+        lv_obj_align(weather_city_label[i], LV_ALIGN_LEFT_MID, 18, 0);
+        lv_obj_set_user_data(weather_city_btn[i], reinterpret_cast<void *>(static_cast<uintptr_t>(i)));
+        lv_obj_add_event_cb(weather_city_btn[i], onButtonWeatherCityClickedEventCallback,
+                            LV_EVENT_CLICKED, this);
+    }
+
+    updateWeatherCityUi();
+}
+
+void AppSettings::updateWeatherCityUi(void)
+{
+    const char *selected_name = homecare_weather_city_get_selected_name();
+    const size_t selected = homecare_weather_city_get_selected_index();
+    const size_t city_count = homecare_weather_city_count();
+    const size_t visible_count = city_count < WEATHER_CITY_LIST_SIZE ? city_count : WEATHER_CITY_LIST_SIZE;
+
+    lv_label_set_text_fmt(ui_LabelPanelSettingMainContainer2Blue, "天气城市  %s", selected_name);
+    lv_label_set_text_fmt(ui_LabelPanelScreenSettingBLESwitch, "当前城市：%s", selected_name);
+
+    for (size_t i = 0; i < visible_count; ++i) {
+        if (weather_city_btn[i] == nullptr || weather_city_label[i] == nullptr) {
+            continue;
+        }
+        const HomeCareWeatherCity *city = homecare_weather_city_get(i);
+        if (city == nullptr) {
+            continue;
+        }
+        if (i == selected) {
+            lv_label_set_text_fmt(weather_city_label[i], "%s   %s", city->name, LV_SYMBOL_OK);
+            lv_obj_set_style_bg_color(weather_city_btn[i], lv_color_hex(0xD9ECFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_border_width(weather_city_btn[i], 2, LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_border_color(weather_city_btn[i], lv_color_hex(0x4CA3FF), LV_PART_MAIN | LV_STATE_DEFAULT);
+        } else {
+            lv_label_set_text_fmt(weather_city_label[i], "%s", city->name);
+            lv_obj_set_style_bg_color(weather_city_btn[i], lv_color_white(), LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_border_width(weather_city_btn[i], 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+        }
+    }
+}
+
+void AppSettings::selectWeatherCity(size_t index)
+{
+    if (homecare_weather_city_select_index(index) != ESP_OK) {
+        ESP_LOGE(TAG, "select weather city failed");
+        return;
+    }
+    updateWeatherCityUi();
+    homecare_weather_service_request_refresh();
 }
 
 bool AppSettings::ensureWifiTaskStarted(void)
@@ -1052,6 +1170,17 @@ void AppSettings::onButtonWifiListClickedEventCallback(lv_event_t * e)
     xEventGroupClearBits(s_wifi_event_group, WIFI_EVENT_SCANING);
 
     esp_wifi_scan_stop();
+}
+
+void AppSettings::onButtonWeatherCityClickedEventCallback(lv_event_t *e)
+{
+    AppSettings *app = (AppSettings *)lv_event_get_user_data(e);
+    ESP_BROOKESIA_CHECK_NULL_GOTO(app, end, "Invalid app pointer");
+
+    app->selectWeatherCity(static_cast<size_t>(reinterpret_cast<uintptr_t>(lv_obj_get_user_data(lv_event_get_target(e)))));
+
+end:
+    return;
 }
 
 void AppSettings::onSwitchPanelScreenSettingBLESwitchValueChangeEventCallback( lv_event_t * e) {

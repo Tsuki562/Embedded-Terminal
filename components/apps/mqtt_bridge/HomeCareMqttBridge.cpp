@@ -8,6 +8,7 @@
 #include "esp_check.h"
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
@@ -56,6 +57,16 @@ static bool s_initialized = false;
 static bool s_started = false;
 static bool s_connected = false;
 
+static void log_internal_dma_heap(const char *label)
+{
+    ESP_LOGI(TAG, "%s: dma_free=%u dma_largest=%u internal_free=%u internal_largest=%u",
+             label,
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+}
+
 static void build_topic(char *out, size_t out_size, const char *suffix)
 {
     if (out == nullptr || out_size == 0) {
@@ -82,10 +93,12 @@ static void start_client_if_ready(void)
         return;
     }
 
+    log_internal_dma_heap("before mqtt start");
     esp_err_t err = esp_mqtt_client_start(s_client);
     if (err == ESP_OK) {
         s_started = true;
         ESP_LOGI(TAG, "MQTT client started");
+        log_internal_dma_heap("after mqtt start");
     } else {
         ESP_LOGW(TAG, "MQTT client start failed: %s", esp_err_to_name(err));
     }
@@ -217,6 +230,12 @@ esp_err_t homecare_mqtt_bridge_init(void)
     mqtt_cfg.session.last_will.msg = "{\"status\":\"offline\"}";
     mqtt_cfg.session.last_will.qos = 1;
     mqtt_cfg.session.last_will.retain = 1;
+    mqtt_cfg.network.timeout_ms = 8000;
+    mqtt_cfg.network.reconnect_timeout_ms = 15000;
+    mqtt_cfg.task.stack_size = 5120;
+    mqtt_cfg.buffer.size = 1024;
+    mqtt_cfg.buffer.out_size = 1024;
+    mqtt_cfg.outbox.limit = 4096;
 
     s_client = esp_mqtt_client_init(&mqtt_cfg);
     if (s_client == nullptr) {

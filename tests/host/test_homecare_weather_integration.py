@@ -41,9 +41,26 @@ def test_weather_service_waits_for_ip_before_first_fetch() -> None:
     assert 'TickType_t wait_ticks = network_ready ? refresh_ticks : portMAX_DELAY;' in source
 
 
+def test_weather_service_uses_selected_city_coordinates() -> None:
+    source = read_text("components/apps/homecare_hub/HomeCareWeather.cpp")
+
+    assert 'homecare_weather_city_get_selected_coordinates' in source
+    assert 'homecare_weather_service_request_refresh' in source
+
+
+def test_settings_screen_exposes_weather_city_selector() -> None:
+    source = read_text("components/apps/setting/Setting.cpp")
+
+    assert '天气城市' in source
+    assert 'homecare_weather_city_select_index' in source
+    assert 'homecare_weather_city_get_selected_name' in source
+
+
 if __name__ == "__main__":
     test_kconfig_exposes_runtime_weather_settings()
     test_homecare_hub_initializes_and_reads_weather_service()
     test_weather_service_uses_real_http_endpoints()
     test_weather_service_initializes_esp_netif_before_http_task()
     test_weather_service_waits_for_ip_before_first_fetch()
+    test_weather_service_uses_selected_city_coordinates()
+    test_settings_screen_exposes_weather_city_selector()

@@ -3,6 +3,7 @@
 #include <cstring>
 #include "HomeCareHub.hpp"
 #include "HomeCareWeather.hpp"
+#include "HomeCareWeatherCity.hpp"
 
 // 应用图标和中文字体资源由 LVGL 的资源编译流程生成，这里只声明外部符号。
 LV_IMG_DECLARE(img_app_setting);
@@ -60,6 +61,7 @@ HomeCareHub::HomeCareHub():
     _mode_label(nullptr),
     _status_label(nullptr),
     _privacy_label(nullptr),
+    _weather_city_label(nullptr),
     _weather_label(nullptr),
     _outdoor_label(nullptr),
     _humidity_label(nullptr),
@@ -106,16 +108,12 @@ bool HomeCareHub::init(void)
 // 应用进入前台时创建界面、设置初始模式，并启动自动演示与 MQTT 轮询定时器。
 bool HomeCareHub::run(void)
 {
-    // 读取 Brookesia 给应用分配的可视区域，异常尺寸时回退到设计稿分辨率。
+    // Brookesia 会把 App 屏幕裁到可视区域，布局也必须跟随这个区域，不能再强行回到 1024x600。
     lv_area_t area = getVisualArea();
-    _width = area.x2 > area.x1 ? area.x2 - area.x1 : 1024;
-    _height = area.y2 > area.y1 ? area.y2 - area.y1 : 600;
-    if (_width < 800) {
-        _width = 1024;
-    }
-    if (_height < 480) {
-        _height = 600;
-    }
+    const int32_t visual_w = area.x2 >= area.x1 ? (area.x2 - area.x1 + 1) : 0;
+    const int32_t visual_h = area.y2 >= area.y1 ? (area.y2 - area.y1 + 1) : 0;
+    _width = visual_w > 0 ? static_cast<uint16_t>(visual_w) : static_cast<uint16_t>(lv_disp_get_hor_res(nullptr));
+    _height = visual_h > 0 ? static_cast<uint16_t>(visual_h) : static_cast<uint16_t>(lv_disp_get_ver_res(nullptr));
 
     createUi();
     setMode(MODE_NORMAL);
@@ -296,7 +294,7 @@ bool HomeCareHub::createUi(void)
     // 根容器铺满可视区域，使用暗色竖向渐变作为整个应用背景。
     _root = lv_obj_create(lv_scr_act());
     lv_obj_set_size(_root, _width, _height);
-    lv_obj_align(_root, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_align(_root, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_bg_color(_root, HUB_BG_COLOR, 0);
     lv_obj_set_style_bg_grad_color(_root, HUB_BG_GRAD_COLOR, 0);
     lv_obj_set_style_bg_grad_dir(_root, LV_GRAD_DIR_VER, 0);
@@ -465,6 +463,8 @@ bool HomeCareHub::createUi(void)
     lv_obj_t *weather = createPanel(right, third_left_w, info_h, HUB_PANEL_2_COLOR);
     lv_obj_align(weather, LV_ALIGN_TOP_LEFT, 0, 0);
     createLabel(weather, "天气", HUB_FONT_HEAD, HUB_TEXT_COLOR);
+    _weather_city_label = createLabel(weather, homecare_weather_city_get_selected_name(), HUB_FONT_SMALL, HUB_MUTED_COLOR);
+    lv_obj_align(_weather_city_label, LV_ALIGN_TOP_RIGHT, 0, 4);
     _weather_label = createLabel(weather, "多云", HUB_FONT_TITLE, HUB_BLUE_COLOR);
     lv_obj_align(_weather_label, LV_ALIGN_TOP_LEFT, 0, 42);
     _outdoor_label = createLabel(weather, "室外 24C", HUB_FONT_BODY, HUB_TEXT_COLOR);
@@ -742,6 +742,7 @@ void HomeCareHub::updateUi(void)
 
     HomeCareWeatherSnapshot weather_snapshot = {};
     if (homecare_weather_service_get_snapshot(&weather_snapshot)) {
+        lv_label_set_text(_weather_city_label, weather_snapshot.city);
         lv_label_set_text(_weather_label, weather_snapshot.weather);
         lv_label_set_text(_outdoor_label, weather_snapshot.outdoor_temp);
         lv_label_set_text(_humidity_label, weather_snapshot.humidity);

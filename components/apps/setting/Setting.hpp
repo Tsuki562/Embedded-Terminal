@@ -8,6 +8,7 @@
 #include <array>
 #include <map>
 #include <string>
+#include <cstddef>
 #include "esp_event.h"
 #include "esp_wifi.h"
 #include "lvgl.h"
@@ -69,6 +70,9 @@ private:
     void startWifiScan(void);
     void stopWifiScan(void);
     void scanWifiAndUpdateUi(void);
+    void initWeatherCityUi(void);
+    void updateWeatherCityUi(void);
+    void selectWeatherCity(size_t index);
     // Smart Gadget
     // void updateGadgetTime(struct tm timeinfo);
 
@@ -90,6 +94,7 @@ private:
     static void onKeyboardScreenSettingVerificationClickedEventCallback(lv_event_t *e);
     // Bluetooth
     static void onSwitchPanelScreenSettingBLESwitchValueChangeEventCallback( lv_event_t * e);
+    static void onButtonWeatherCityClickedEventCallback(lv_event_t *e);
     // Audio
     static void onSliderPanelVolumeSwitchValueChangeEventCallback( lv_event_t * e);
     // Brightness

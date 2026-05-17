@@ -13,7 +13,7 @@
 
 static const char *TAG = "lvgl_adapter_init";
 
-#define LVGL_ADAPTER_BUFFER_HEIGHT 20
+#define LVGL_ADAPTER_BUFFER_HEIGHT 80
 
 static void lvgl_adapter_get_resolution(uint32_t *out_hres, uint32_t *out_vres)
 {

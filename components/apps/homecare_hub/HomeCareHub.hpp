@@ -106,6 +106,7 @@ private:
     lv_obj_t *_mode_label;
     lv_obj_t *_status_label;
     lv_obj_t *_privacy_label;
+    lv_obj_t *_weather_city_label;
     lv_obj_t *_weather_label;
     lv_obj_t *_outdoor_label;
     lv_obj_t *_humidity_label;

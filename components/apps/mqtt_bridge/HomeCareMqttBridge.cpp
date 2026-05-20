@@ -15,19 +15,19 @@
 #include "mqtt_client.h"
 
 #ifndef CONFIG_HOMECARE_MQTT_BROKER_URI
-#define CONFIG_HOMECARE_MQTT_BROKER_URI "mqtts://x3a5a71f.ala.cn-hangzhou.emqxsl.cn:8883"
+#define CONFIG_HOMECARE_MQTT_BROKER_URI ""
 #endif
 
 #ifndef CONFIG_HOMECARE_MQTT_CLIENT_ID
-#define CONFIG_HOMECARE_MQTT_CLIENT_ID "123"
+#define CONFIG_HOMECARE_MQTT_CLIENT_ID "homecare-hub"
 #endif
 
 #ifndef CONFIG_HOMECARE_MQTT_USERNAME
-#define CONFIG_HOMECARE_MQTT_USERNAME "wsh"
+#define CONFIG_HOMECARE_MQTT_USERNAME ""
 #endif
 
 #ifndef CONFIG_HOMECARE_MQTT_PASSWORD
-#define CONFIG_HOMECARE_MQTT_PASSWORD "wsh040428"
+#define CONFIG_HOMECARE_MQTT_PASSWORD ""
 #endif
 
 #ifndef CONFIG_HOMECARE_MQTT_INBOUND_CMD_TOPIC
@@ -75,9 +75,28 @@ static void build_topic(char *out, size_t out_size, const char *suffix)
     snprintf(out, out_size, "%s/%s", CONFIG_HOMECARE_MQTT_BASE_TOPIC, suffix);
 }
 
+static bool broker_uri_is_valid(const char *uri)
+{
+    if (uri == nullptr || uri[0] == '\0') {
+        return false;
+    }
+
+    const char *scheme_end = strstr(uri, "://");
+    if (scheme_end == nullptr || scheme_end == uri) {
+        return false;
+    }
+
+    const char *host = scheme_end + 3;
+    if (host[0] == '\0' || host[0] == ':' || host[0] == '/') {
+        return false;
+    }
+
+    return true;
+}
+
 static esp_err_t publish_outbound(const HomeCareMqttOutboundMessage *msg)
 {
-    if (msg == nullptr || s_client == nullptr) {
+    if (msg == nullptr || s_client == nullptr || !s_connected) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -203,6 +222,12 @@ esp_err_t homecare_mqtt_bridge_init(void)
         return ESP_OK;
     }
 
+    if (!broker_uri_is_valid(CONFIG_HOMECARE_MQTT_BROKER_URI)) {
+        s_initialized = true;
+        ESP_LOGW(TAG, "MQTT disabled: invalid broker URI");
+        return ESP_OK;
+    }
+
     esp_err_t err = esp_event_loop_create_default();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         return err;
@@ -230,12 +255,12 @@ esp_err_t homecare_mqtt_bridge_init(void)
     mqtt_cfg.session.last_will.msg = "{\"status\":\"offline\"}";
     mqtt_cfg.session.last_will.qos = 1;
     mqtt_cfg.session.last_will.retain = 1;
-    mqtt_cfg.network.timeout_ms = 8000;
-    mqtt_cfg.network.reconnect_timeout_ms = 15000;
-    mqtt_cfg.task.stack_size = 5120;
-    mqtt_cfg.buffer.size = 1024;
-    mqtt_cfg.buffer.out_size = 1024;
-    mqtt_cfg.outbox.limit = 4096;
+    mqtt_cfg.network.timeout_ms = 6000;
+    mqtt_cfg.network.reconnect_timeout_ms = 30000;
+    mqtt_cfg.task.stack_size = 4096;
+    mqtt_cfg.buffer.size = 768;
+    mqtt_cfg.buffer.out_size = 512;
+    mqtt_cfg.outbox.limit = 2048;
 
     s_client = esp_mqtt_client_init(&mqtt_cfg);
     if (s_client == nullptr) {
@@ -253,7 +278,7 @@ esp_err_t homecare_mqtt_bridge_init(void)
                         TAG, "register wifi event failed");
 
     s_initialized = true;
-    ESP_LOGI(TAG, "MQTT bridge initialized, broker=%s", CONFIG_HOMECARE_MQTT_BROKER_URI);
+    ESP_LOGI(TAG, "MQTT bridge initialized, broker configured");
     return ESP_OK;
 }
 
@@ -291,7 +316,7 @@ esp_err_t homecare_mqtt_bridge_publish_mode(homecare_mqtt_mode_t mode)
 esp_err_t homecare_mqtt_bridge_publish_event(const HomeCareMqttEvent *event,
                                              homecare_mqtt_mode_t mode)
 {
-    if (event == nullptr || s_client == nullptr) {
+    if (event == nullptr || s_client == nullptr || !s_connected) {
         return ESP_ERR_INVALID_ARG;
     }
 

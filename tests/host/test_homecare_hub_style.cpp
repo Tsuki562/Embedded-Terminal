@@ -36,7 +36,9 @@ static void test_homecare_terminal_uses_lighter_status_treatments()
     assert(source.find("lv_obj_set_style_bg_opa(_event_level_labels[i], LV_OPA_20, 0);") != std::string::npos);
     assert(source.find("lv_obj_set_size(event_dot, 6, 6);") != std::string::npos);
     assert(source.find("const char *button_icons[] = {LV_SYMBOL_REFRESH, LV_SYMBOL_HOME, LV_SYMBOL_EYE_OPEN, LV_SYMBOL_CALL};") != std::string::npos);
-    assert(source.find("lv_label_set_text(weather_icon, LV_SYMBOL_HOME);") != std::string::npos);
+    assert(source.find("lv_obj_t *weather_metrics = lv_obj_create(weather);") != std::string::npos);
+    assert(source.find("lv_obj_t *weather_rows[3] = {};") != std::string::npos);
+    assert(source.find("lv_label_set_text(icon, weather_symbols[i]);") != std::string::npos);
 }
 
 static void test_third_page_uses_balanced_two_column_layout()

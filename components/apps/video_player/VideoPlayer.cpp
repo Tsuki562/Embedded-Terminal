@@ -70,9 +70,7 @@ bool AppVideoPlayer::back(void)
 
 bool AppVideoPlayer::close(void)
 {
-    esp_lv_adapter_unlock();
     esp_lvgl_simple_player_del();
-    esp_lv_adapter_lock(100);
 
     return true;
 }
@@ -98,6 +96,16 @@ void AppVideoPlayer::app_show_ui(void)
     lv_obj_set_flex_align(cont_col, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_bg_color(cont_col, lv_color_black(), 0);
     lv_obj_set_style_border_width(cont_col, 0, 0);
+
+    if (_midea_info_vect.empty() || _video_name == nullptr) {
+        lv_obj_t *empty_label = lv_label_create(cont_col);
+        lv_label_set_text(empty_label, "No .mjpeg files found");
+        lv_obj_set_style_text_color(empty_label, lv_color_white(), 0);
+        lv_obj_set_style_text_font(empty_label, &lv_font_montserrat_20, 0);
+        lv_obj_center(empty_label);
+        ESP_LOGW(TAG, "No .mjpeg files found under %s", BSP_SD_MOUNT_POINT);
+        return;
+    }
 
     lv_obj_t *cont_row = lv_obj_create(cont_col);
     lv_obj_set_size(cont_row, BSP_LCD_H_RES - 20, 80);
@@ -173,6 +181,7 @@ uint8_t AppVideoPlayer::searchMideaFiles(void)
     DIR *d;
 
     _midea_info_vect.clear();
+    _video_name = nullptr;
 
     // Search and store video files
     if (DIR *d = opendir(BSP_SD_MOUNT_POINT)) {
@@ -190,7 +199,7 @@ uint8_t AppVideoPlayer::searchMideaFiles(void)
     }
 
     // Select the video file based on 'sel_file'
-    if (sel_file >= 0 && sel_file < _midea_info_vect.size()) {
+    if (sel_file >= 0 && static_cast<size_t>(sel_file) < _midea_info_vect.size()) {
         _video_name = _midea_info_vect[sel_file].video_name.c_str();
     }
 

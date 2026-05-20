@@ -38,6 +38,8 @@ namespace {
 
 static const char *TAG = "homecare_weather";
 static constexpr size_t kHttpBufferSize = 1024;
+static constexpr size_t kMinTlsDmaFree = 8192;
+static constexpr size_t kMinTlsDmaLargest = 4096;
 static constexpr uint32_t kRequestTimeoutMs = 10000;
 static constexpr uint32_t kTaskStackSize = 6144;
 static constexpr UBaseType_t kTaskPriority = 2;
@@ -65,6 +67,26 @@ static void log_internal_dma_heap(const char *label)
              static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT)),
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
              static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+}
+
+static bool has_enough_dma_for_tls(const char *label)
+{
+    const size_t dma_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    const size_t dma_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    if (dma_free < kMinTlsDmaFree || dma_largest < kMinTlsDmaLargest) {
+        ESP_LOGW(TAG, "skip weather fetch: insufficient DMA heap at %s, dma_free=%u dma_largest=%u",
+                 label ? label : "unknown",
+                 static_cast<unsigned>(dma_free),
+                 static_cast<unsigned>(dma_largest));
+        return false;
+    }
+    return true;
+}
+
+static bool url_uses_tls(const char *url)
+{
+    return url != nullptr &&
+           (std::strncmp(url, "https://", 8) == 0 || std::strncmp(url, "mqtts://", 8) == 0 || std::strncmp(url, "wss://", 6) == 0);
 }
 
 static void set_loading_snapshot(HomeCareWeatherSnapshot *snapshot)
@@ -235,12 +257,12 @@ static void build_weather_urls(char *forecast_url, size_t forecast_size,
 
     if (forecast_url != nullptr && forecast_size > 0) {
         std::snprintf(forecast_url, forecast_size,
-                      "https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s&current=temperature_2m,relative_humidity_2m,weather_code,is_day&forecast_days=1&timezone=auto",
+                      "http://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s&current=temperature_2m,relative_humidity_2m,weather_code,is_day&forecast_days=1&timezone=auto",
                       latitude, longitude);
     }
     if (air_url != nullptr && air_size > 0) {
         std::snprintf(air_url, air_size,
-                      "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=%s&longitude=%s&current=us_aqi&timezone=auto",
+                      "http://air-quality-api.open-meteo.com/v1/air-quality?latitude=%s&longitude=%s&current=us_aqi&timezone=auto",
                       latitude, longitude);
     }
 }
@@ -257,9 +279,11 @@ static esp_err_t http_get_json(const char *url, char *response, size_t response_
     config.url = url;
     config.timeout_ms = kRequestTimeoutMs;
     config.method = HTTP_METHOD_GET;
-    config.transport_type = HTTP_TRANSPORT_OVER_SSL;
+    config.transport_type = url_uses_tls(url) ? HTTP_TRANSPORT_OVER_SSL : HTTP_TRANSPORT_OVER_TCP;
 #if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
-    config.crt_bundle_attach = esp_crt_bundle_attach;
+    if (url_uses_tls(url)) {
+        config.crt_bundle_attach = esp_crt_bundle_attach;
+    }
 #endif
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -406,26 +430,48 @@ static void update_snapshot_if_unavailable(void)
 static esp_err_t fetch_and_update_snapshot(void)
 {
     ParsedWeatherData parsed = {};
+    HomeCareWeatherSnapshot next_snapshot = {};
     char forecast_url[256] = {};
     char air_url[256] = {};
-    char forecast_json[kHttpBufferSize] = {};
-    char air_json[kHttpBufferSize] = {};
+    esp_err_t err = ESP_OK;
+    char *json_buffer = nullptr;
 
     build_weather_urls(forecast_url, sizeof(forecast_url), air_url, sizeof(air_url));
 
-    log_internal_dma_heap("before weather forecast fetch");
-    ESP_RETURN_ON_ERROR(http_get_json(forecast_url, forecast_json, sizeof(forecast_json)),
-                        TAG, "fetch forecast failed");
-    ESP_RETURN_ON_FALSE(parse_weather_json(forecast_json, &parsed), ESP_FAIL,
-                        TAG, "parse forecast failed");
+    json_buffer = static_cast<char *>(heap_caps_malloc(kHttpBufferSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (json_buffer == nullptr) {
+        json_buffer = static_cast<char *>(heap_caps_malloc(kHttpBufferSize, MALLOC_CAP_8BIT));
+    }
+    if (json_buffer == nullptr) {
+        return ESP_ERR_NO_MEM;
+    }
+    json_buffer[0] = '\0';
 
-    if (http_get_json(air_url, air_json, sizeof(air_json)) == ESP_OK) {
-        (void)parse_air_quality_json(air_json, &parsed);
+    log_internal_dma_heap("before weather forecast fetch");
+    if (url_uses_tls(forecast_url) && !has_enough_dma_for_tls("forecast")) {
+        err = ESP_ERR_NO_MEM;
+        goto cleanup;
+    }
+
+    err = http_get_json(forecast_url, json_buffer, kHttpBufferSize);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "fetch forecast failed: %s", esp_err_to_name(err));
+        goto cleanup;
+    }
+    if (!parse_weather_json(json_buffer, &parsed)) {
+        ESP_LOGE(TAG, "parse forecast failed");
+        err = ESP_FAIL;
+        goto cleanup;
+    }
+
+    json_buffer[0] = '\0';
+    if ((!url_uses_tls(air_url) || has_enough_dma_for_tls("air")) &&
+        http_get_json(air_url, json_buffer, kHttpBufferSize) == ESP_OK) {
+        (void)parse_air_quality_json(json_buffer, &parsed);
     } else {
         parsed.has_air_quality = false;
     }
 
-    HomeCareWeatherSnapshot next_snapshot = {};
     build_snapshot_from_parsed(parsed, &next_snapshot);
 
     if (s_lock != nullptr && xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
@@ -441,7 +487,9 @@ static esp_err_t fetch_and_update_snapshot(void)
              next_snapshot.air_quality,
              parsed.has_air_quality ? "" : " (AQI unavailable)");
 
-    return ESP_OK;
+cleanup:
+    heap_caps_free(json_buffer);
+    return err;
 }
 
 static void weather_task(void *arg)
@@ -510,7 +558,11 @@ esp_err_t homecare_weather_service_init(void)
 #else
     // The weather task resolves DNS as soon as it is notified, so make sure
     // lwIP/tcpip is initialized before any HTTP work can start.
-    ESP_RETURN_ON_ERROR(esp_netif_init(), TAG, "init netif failed");
+    esp_err_t netif_err = esp_netif_init();
+    if (netif_err != ESP_OK && netif_err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "init netif failed: %s", esp_err_to_name(netif_err));
+        return netif_err;
+    }
     ESP_RETURN_ON_ERROR(homecare_weather_city_init(), TAG, "init weather city failed");
 
     esp_err_t err = esp_event_loop_create_default();

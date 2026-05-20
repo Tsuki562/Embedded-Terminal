@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stdio.h>
 #include "esp_log.h"
 #include "esp_check.h"
 #include "esp_codec_dev_defaults.h"
@@ -67,7 +68,9 @@ esp_err_t bsp_extra_i2s_read(void *audio_buffer, size_t len, size_t *bytes_read,
 {
     esp_err_t ret = ESP_OK;
     ret = esp_codec_dev_read(record_dev_handle, audio_buffer, len);
-    *bytes_read = len;
+    if (bytes_read) {
+        *bytes_read = (ret == ESP_OK) ? len : 0;
+    }
     return ret;
 }
 
@@ -75,7 +78,9 @@ esp_err_t bsp_extra_i2s_write(void *audio_buffer, size_t len, size_t *bytes_writ
 {
     esp_err_t ret = ESP_OK;
     ret = esp_codec_dev_write(play_dev_handle, audio_buffer, len);
-    *bytes_written = len;
+    if (bytes_written) {
+        *bytes_written = (ret == ESP_OK) ? len : 0;
+    }
     return ret;
 }
 
@@ -223,7 +228,7 @@ esp_err_t bsp_extra_player_play_index(file_iterator_instance_t *instance, int in
     ESP_LOGI(TAG, "Playing '%s'", filename);
     ESP_RETURN_ON_ERROR(audio_player_play(fp), TAG, "audio_player_play failed");
 
-    memcpy(audio_file_path, filename, sizeof(audio_file_path));
+    snprintf(audio_file_path, sizeof(audio_file_path), "%s", filename);
 
     return ESP_OK;
 }
@@ -237,7 +242,7 @@ esp_err_t bsp_extra_player_play_file(const char *file_path)
     ESP_LOGI(TAG, "Playing '%s'", file_path);
     ESP_RETURN_ON_ERROR(audio_player_play(fp), TAG, "audio_player_play failed");
 
-    memcpy(audio_file_path, file_path, sizeof(audio_file_path));
+    snprintf(audio_file_path, sizeof(audio_file_path), "%s", file_path);
 
     return ESP_OK;
 }

@@ -9,6 +9,8 @@
 #include <map>
 #include <string>
 #include <cstddef>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_event.h"
 #include "esp_wifi.h"
 #include "lvgl.h"
@@ -111,4 +113,6 @@ private:
     std::map<std::string, int32_t> _nvs_param_map;
     const ESP_Brookesia_StatusBar *status_bar; 
     const ESP_Brookesia_RecentsScreen *backstage;
+    TaskHandle_t _home_refresh_task;
+    volatile bool _home_refresh_task_stop;
 };

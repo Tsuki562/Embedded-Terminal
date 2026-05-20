@@ -77,7 +77,7 @@ private:
 
     lv_obj_t *createPanel(lv_obj_t *parent, int32_t width, int32_t height, lv_color_t bg);
     lv_obj_t *createLabel(lv_obj_t *parent, const char *text, const lv_font_t *font, lv_color_t color);
-    void setCardAccent(lv_obj_t *obj, lv_color_t color);
+    void setCardAccent(lv_obj_t *obj, lv_obj_t *accent, lv_color_t color);
     void styleHeader(lv_obj_t *obj);
     void styleButton(lv_obj_t *obj, lv_color_t bg, bool filled);
     void styleBar(lv_obj_t *obj, lv_color_t color);
@@ -126,11 +126,13 @@ private:
     lv_obj_t *_route_label;
 
     std::array<lv_obj_t *, 4> _room_cards;
+    std::array<lv_obj_t *, 4> _room_accent_bars;
     std::array<lv_obj_t *, 4> _room_name_labels;
     std::array<lv_obj_t *, 4> _room_activity_labels;
     std::array<lv_obj_t *, 4> _room_risk_labels;
     std::array<lv_obj_t *, 4> _room_csi_labels;
     std::array<lv_obj_t *, 4> _event_cards;
+    std::array<lv_obj_t *, 4> _event_dot_labels;
     std::array<lv_obj_t *, 4> _event_level_labels;
     std::array<lv_obj_t *, 4> _event_time_labels;
     std::array<lv_obj_t *, 4> _event_text_labels;

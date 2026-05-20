@@ -80,11 +80,13 @@ HomeCareHub::HomeCareHub():
     _route_bar(nullptr),
     _route_label(nullptr),
     _room_cards({}),
+    _room_accent_bars({}),
     _room_name_labels({}),
     _room_activity_labels({}),
     _room_risk_labels({}),
     _room_csi_labels({}),
     _event_cards({}),
+    _event_dot_labels({}),
     _event_level_labels({}),
     _event_time_labels({}),
     _event_text_labels({})
@@ -108,6 +110,10 @@ bool HomeCareHub::init(void)
 // 应用进入前台时创建界面、设置初始模式，并启动自动演示与 MQTT 轮询定时器。
 bool HomeCareHub::run(void)
 {
+    if (_root != nullptr) {
+        close();
+    }
+
     // Brookesia 会把 App 屏幕裁到可视区域，布局也必须跟随这个区域，不能再强行回到 1024x600。
     lv_area_t area = getVisualArea();
     const int32_t visual_w = area.x2 >= area.x1 ? (area.x2 - area.x1 + 1) : 0;
@@ -140,6 +146,38 @@ bool HomeCareHub::close(void)
     }
     _pages = nullptr;
     _page_dots.fill(nullptr);
+    _mode_label = nullptr;
+    _status_label = nullptr;
+    _privacy_label = nullptr;
+    _weather_city_label = nullptr;
+    _weather_label = nullptr;
+    _outdoor_label = nullptr;
+    _humidity_label = nullptr;
+    _air_label = nullptr;
+    _indoor_label = nullptr;
+    _night_label = nullptr;
+    _car_status_label = nullptr;
+    _car_position_label = nullptr;
+    _car_target_label = nullptr;
+    _car_phase_label = nullptr;
+    _obstacle_label = nullptr;
+    _sensor_label = nullptr;
+    _voice_label = nullptr;
+    _battery_bar = nullptr;
+    _battery_label = nullptr;
+    _route_bar = nullptr;
+    _route_label = nullptr;
+    _room_cards.fill(nullptr);
+    _room_accent_bars.fill(nullptr);
+    _room_name_labels.fill(nullptr);
+    _room_activity_labels.fill(nullptr);
+    _room_risk_labels.fill(nullptr);
+    _room_csi_labels.fill(nullptr);
+    _event_cards.fill(nullptr);
+    _event_dot_labels.fill(nullptr);
+    _event_level_labels.fill(nullptr);
+    _event_time_labels.fill(nullptr);
+    _event_text_labels.fill(nullptr);
     return true;
 }
 
@@ -203,17 +241,10 @@ lv_obj_t *HomeCareHub::createLabel(lv_obj_t *parent, const char *text, const lv_
 }
 
 // 根据风险/状态颜色高亮卡片边框、外描边和阴影，便于快速识别异常区域。
-void HomeCareHub::setCardAccent(lv_obj_t *obj, lv_color_t color)
+void HomeCareHub::setCardAccent(lv_obj_t *obj, lv_obj_t *accent, lv_color_t color)
 {
-    lv_obj_t *accent = static_cast<lv_obj_t *>(lv_obj_get_user_data(obj));
-    if (accent == nullptr) {
-        accent = lv_obj_create(obj);
-        lv_obj_set_user_data(obj, accent);
-        lv_obj_set_style_border_width(accent, 0, 0);
-        lv_obj_set_style_radius(accent, 0, 0);
-        lv_obj_set_style_pad_all(accent, 0, 0);
-        lv_obj_clear_flag(accent, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_move_background(accent);
+    if (obj == nullptr || accent == nullptr) {
+        return;
     }
 
     lv_obj_set_size(accent, 3, lv_obj_get_height(obj));
@@ -407,6 +438,12 @@ bool HomeCareHub::createUi(void)
                      (i % 2) * (room_card_w + room_gap),
                      44 + (i / 2) * (room_card_h + room_gap));
         _room_cards[i] = card;
+        _room_accent_bars[i] = lv_obj_create(card);
+        lv_obj_set_style_border_width(_room_accent_bars[i], 0, 0);
+        lv_obj_set_style_radius(_room_accent_bars[i], 0, 0);
+        lv_obj_set_style_pad_all(_room_accent_bars[i], 0, 0);
+        lv_obj_clear_flag(_room_accent_bars[i], LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_move_background(_room_accent_bars[i]);
         _room_name_labels[i] = createLabel(card, room_names[i], HUB_FONT_BODY, HUB_TEXT_COLOR);
         lv_obj_align(_room_name_labels[i], LV_ALIGN_TOP_LEFT, 0, 0);
         _room_activity_labels[i] = createLabel(card, "空闲", HUB_FONT_SMALL, HUB_MUTED_COLOR);
@@ -507,27 +544,45 @@ bool HomeCareHub::createUi(void)
     lv_obj_align(_weather_city_label, LV_ALIGN_TOP_RIGHT, 0, 4);
     _weather_label = createLabel(weather, "多云", HUB_FONT_TITLE, HUB_BLUE_COLOR);
     lv_obj_align(_weather_label, LV_ALIGN_TOP_LEFT, 0, 42);
-    _outdoor_label = createLabel(weather, "室外 24C", HUB_FONT_BODY, HUB_TEXT_COLOR);
-    lv_obj_t *weather_icon = lv_label_create(weather);
-    lv_label_set_text(weather_icon, LV_SYMBOL_HOME);
-    lv_obj_set_style_text_font(weather_icon, LV_FONT_DEFAULT, 0);
-    lv_obj_set_style_text_color(weather_icon, HUB_BLUE_COLOR, 0);
-    lv_obj_align(weather_icon, LV_ALIGN_TOP_LEFT, 0, 103);
-    lv_obj_align(_outdoor_label, LV_ALIGN_TOP_LEFT, 26, 100);
-    _humidity_label = createLabel(weather, "湿度 58%", HUB_FONT_BODY, HUB_TEXT_COLOR);
-    lv_obj_t *humidity_icon = lv_label_create(weather);
-    lv_label_set_text(humidity_icon, LV_SYMBOL_REFRESH);
-    lv_obj_set_style_text_font(humidity_icon, LV_FONT_DEFAULT, 0);
-    lv_obj_set_style_text_color(humidity_icon, HUB_PURPLE_COLOR, 0);
-    lv_obj_align(humidity_icon, LV_ALIGN_TOP_LEFT, 0, 133);
-    lv_obj_align(_humidity_label, LV_ALIGN_TOP_LEFT, 26, 130);
-    _air_label = createLabel(weather, "空气 良好", HUB_FONT_BODY, HUB_GREEN_COLOR);
-    lv_obj_t *air_icon = lv_label_create(weather);
-    lv_label_set_text(air_icon, LV_SYMBOL_OK);
-    lv_obj_set_style_text_font(air_icon, LV_FONT_DEFAULT, 0);
-    lv_obj_set_style_text_color(air_icon, HUB_GREEN_COLOR, 0);
-    lv_obj_align(air_icon, LV_ALIGN_BOTTOM_LEFT, 0, -2);
-    lv_obj_align(_air_label, LV_ALIGN_BOTTOM_LEFT, 26, 0);
+
+    lv_obj_t *weather_metrics = lv_obj_create(weather);
+    lv_obj_set_size(weather_metrics, third_left_w - 28, 84);
+    lv_obj_align(weather_metrics, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_style_bg_opa(weather_metrics, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(weather_metrics, 0, 0);
+    lv_obj_set_style_pad_all(weather_metrics, 0, 0);
+    lv_obj_set_style_pad_row(weather_metrics, 3, 0);
+    lv_obj_set_flex_flow(weather_metrics, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(weather_metrics, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_clear_flag(weather_metrics, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *weather_rows[3] = {};
+    const char *weather_symbols[] = {LV_SYMBOL_HOME, LV_SYMBOL_REFRESH, LV_SYMBOL_OK};
+    lv_color_t weather_symbol_colors[] = {HUB_BLUE_COLOR, HUB_PURPLE_COLOR, HUB_GREEN_COLOR};
+    for (int i = 0; i < 3; ++i) {
+        weather_rows[i] = lv_obj_create(weather_metrics);
+        lv_obj_set_size(weather_rows[i], third_left_w - 28, 26);
+        lv_obj_set_style_bg_opa(weather_rows[i], LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(weather_rows[i], 0, 0);
+        lv_obj_set_style_pad_all(weather_rows[i], 0, 0);
+        lv_obj_clear_flag(weather_rows[i], LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *icon = lv_label_create(weather_rows[i]);
+        lv_label_set_text(icon, weather_symbols[i]);
+        lv_obj_set_style_text_font(icon, LV_FONT_DEFAULT, 0);
+        lv_obj_set_style_text_color(icon, weather_symbol_colors[i], 0);
+        lv_obj_align(icon, LV_ALIGN_LEFT_MID, 0, 0);
+    }
+
+    _outdoor_label = createLabel(weather_rows[0], "室外 24C", HUB_FONT_BODY, HUB_TEXT_COLOR);
+    lv_obj_set_width(_outdoor_label, third_left_w - 58);
+    lv_obj_align(_outdoor_label, LV_ALIGN_LEFT_MID, 26, 0);
+    _humidity_label = createLabel(weather_rows[1], "湿度 58%", HUB_FONT_BODY, HUB_TEXT_COLOR);
+    lv_obj_set_width(_humidity_label, third_left_w - 58);
+    lv_obj_align(_humidity_label, LV_ALIGN_LEFT_MID, 26, 0);
+    _air_label = createLabel(weather_rows[2], "空气 良好", HUB_FONT_BODY, HUB_GREEN_COLOR);
+    lv_obj_set_width(_air_label, third_left_w - 58);
+    lv_obj_align(_air_label, LV_ALIGN_LEFT_MID, 26, 0);
 
     // 室内环境卡展示当前室内温湿度和夜间风险提示。
     lv_obj_t *env = createPanel(right, third_left_w, info_h, HUB_PANEL_2_COLOR);
@@ -568,7 +623,8 @@ bool HomeCareHub::createUi(void)
         lv_obj_set_style_pad_all(event_dot, 0, 0);
         lv_obj_clear_flag(event_dot, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_align(event_dot, LV_ALIGN_LEFT_MID, 0, 0);
-        _event_cards[i] = event_dot;
+        _event_cards[i] = event_row;
+        _event_dot_labels[i] = event_dot;
         _event_level_labels[i] = createLabel(event, "L0", HUB_FONT_SMALL, HUB_GREEN_COLOR);
         lv_obj_set_style_radius(_event_level_labels[i], LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_color(_event_level_labels[i], HUB_GREEN_COLOR, 0);
@@ -889,7 +945,7 @@ void HomeCareHub::updateUi(void)
         lv_label_set_text(_room_risk_labels[i], room.risk);
         lv_obj_set_style_text_color(_room_risk_labels[i], room.accent, 0);
         lv_label_set_text_fmt(_room_csi_labels[i], "CSI %d%%", room.csi);
-        setCardAccent(_room_cards[i], room.accent);
+        setCardAccent(_room_cards[i], _room_accent_bars[i], room.accent);
     }
 
     for (int i = 0; i < 4; ++i) {
@@ -902,7 +958,7 @@ void HomeCareHub::updateUi(void)
         lv_obj_set_style_bg_color(_event_level_labels[i], event.accent, 0);
         lv_obj_set_style_bg_opa(_event_level_labels[i], LV_OPA_20, 0);
         lv_obj_set_style_border_color(_event_level_labels[i], event.accent, 0);
-        lv_obj_set_style_bg_color(_event_cards[i], event.accent, 0);
+        lv_obj_set_style_bg_color(_event_dot_labels[i], event.accent, 0);
     }
 
     if (_has_mqtt_event) {
@@ -914,7 +970,7 @@ void HomeCareHub::updateUi(void)
         lv_obj_set_style_bg_color(_event_level_labels[0], _mqtt_event_color, 0);
         lv_obj_set_style_bg_opa(_event_level_labels[0], LV_OPA_20, 0);
         lv_obj_set_style_border_color(_event_level_labels[0], _mqtt_event_color, 0);
-        lv_obj_set_style_bg_color(_event_cards[0], _mqtt_event_color, 0);
+        lv_obj_set_style_bg_color(_event_dot_labels[0], _mqtt_event_color, 0);
     }
 }
 

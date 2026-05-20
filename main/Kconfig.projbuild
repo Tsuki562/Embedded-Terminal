@@ -8,27 +8,30 @@ menu "Example Configurations"
     menu "HomeCare MQTT"
         config HOMECARE_MQTT_BROKER_URI
             string "MQTT broker URI"
-            default "mqtts://x3a5a71f.ala.cn-hangzhou.emqxsl.cn:8883"
+            default ""
             help
-                MQTT broker used by the HomeCare hub. Supported schemes follow ESP-MQTT, such as mqtt://, mqtts://, ws://, and wss://.
+                MQTT broker used by the HomeCare hub. Leave empty to disable MQTT until
+                deployment-specific credentials are configured locally. Supported schemes
+                follow ESP-MQTT, such as mqtt://, mqtts://, ws://, and wss://.
 
         config HOMECARE_MQTT_CLIENT_ID
             string "MQTT client ID"
-            default "123"
+            default "homecare-hub"
             help
                 Client ID sent when connecting to the broker.
 
         config HOMECARE_MQTT_USERNAME
             string "MQTT username"
-            default "wsh"
+            default ""
             help
                 Username sent when connecting to the broker.
 
         config HOMECARE_MQTT_PASSWORD
             string "MQTT password"
-            default "wsh040428"
+            default ""
             help
-                Password sent when connecting to the broker. Override it in menuconfig or sdkconfig if the broker-side credential changes.
+                Password sent when connecting to the broker. Keep credentials in a local
+                sdkconfig or NVS provisioning flow instead of checked-in defaults.
 
         config HOMECARE_MQTT_INBOUND_CMD_TOPIC
             string "Inbound smart-car command topic"

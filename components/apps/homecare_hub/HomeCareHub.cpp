@@ -200,12 +200,7 @@ lv_obj_t *HomeCareHub::createPanel(lv_obj_t *parent, int32_t width, int32_t heig
     lv_obj_t *panel = lv_obj_create(parent);
     lv_obj_set_size(panel, width, height);
     lv_obj_set_style_bg_color(panel, bg, 0);
-    // 外层页面面板和内层信息卡使用不同渐变色，形成视觉层级。
-    const bool is_page_panel = lv_color_to32(bg) == lv_color_to32(HUB_PANEL_COLOR);
-    lv_obj_set_style_bg_grad_color(panel, is_page_panel ? HUB_PANEL_GRAD_COLOR : HUB_CARD_GRAD_COLOR, 0);
-    lv_obj_set_style_bg_grad_dir(panel, LV_GRAD_DIR_VER, 0);
-    lv_obj_set_style_bg_main_stop(panel, 28, 0);
-    lv_obj_set_style_bg_grad_stop(panel, 230, 0);
+    lv_obj_set_style_bg_grad_dir(panel, LV_GRAD_DIR_NONE, 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(panel, 1, 0);
     lv_obj_set_style_border_color(panel, HUB_LINE_COLOR, 0);
@@ -261,8 +256,7 @@ void HomeCareHub::setCardAccent(lv_obj_t *obj, lv_obj_t *accent, lv_color_t colo
 void HomeCareHub::styleHeader(lv_obj_t *obj)
 {
     lv_obj_set_style_bg_color(obj, lv_color_hex(0x132032), 0);
-    lv_obj_set_style_bg_grad_color(obj, lv_color_hex(0x1C3048), 0);
-    lv_obj_set_style_bg_grad_dir(obj, LV_GRAD_DIR_HOR, 0);
+    lv_obj_set_style_bg_grad_dir(obj, LV_GRAD_DIR_NONE, 0);
     lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(obj, 1, 0);
     lv_obj_set_style_border_color(obj, HUB_LINE_COLOR, 0);
@@ -342,8 +336,7 @@ bool HomeCareHub::createUi(void)
     lv_obj_set_size(_root, _width, _height);
     lv_obj_align(_root, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_bg_color(_root, HUB_BG_COLOR, 0);
-    lv_obj_set_style_bg_grad_color(_root, HUB_BG_GRAD_COLOR, 0);
-    lv_obj_set_style_bg_grad_dir(_root, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_grad_dir(_root, LV_GRAD_DIR_NONE, 0);
     lv_obj_set_style_border_width(_root, 0, 0);
     lv_obj_set_style_radius(_root, 0, 0);
     lv_obj_set_style_pad_all(_root, 14, 0);

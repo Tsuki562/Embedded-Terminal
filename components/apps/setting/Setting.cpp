@@ -642,6 +642,7 @@ void AppSettings::initWeatherCityUi(void)
         weather_city_label[i] = lv_label_create(weather_city_btn[i]);
         lv_label_set_text_fmt(weather_city_label[i], "%s", city->name);
         applyChineseFont(weather_city_label[i], &homecare_font_simsun_20);
+        lv_obj_set_style_text_color(weather_city_label[i], lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_align(weather_city_label[i], LV_ALIGN_LEFT_MID, 18, 0);
         lv_obj_set_user_data(weather_city_btn[i], reinterpret_cast<void *>(static_cast<uintptr_t>(i)));
         lv_obj_add_event_cb(weather_city_btn[i], onButtonWeatherCityClickedEventCallback,

@@ -1,0 +1,1229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>智能家庭终端</title>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0c0f10;
+      --ink: #f7fbfa;
+      --muted: #9ba8a6;
+      --faint: #687674;
+      --panel: rgba(18, 23, 24, 0.84);
+      --panel-solid: #151b1d;
+      --line: rgba(255, 255, 255, 0.12);
+      --line-strong: rgba(255, 255, 255, 0.2);
+      --cyan: #3fe0d0;
+      --green: #9be86f;
+      --amber: #ffc35a;
+      --coral: #ff7f73;
+      --blue: #78a8ff;
+      --radius: 8px;
+      --shadow: 0 28px 90px rgba(0, 0, 0, 0.46);
+      font-family: "Inter", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      background: var(--bg);
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(90deg, rgba(63, 224, 208, 0.08), transparent 34%),
+        linear-gradient(180deg, #111617 0%, #080a0b 100%);
+      overflow-x: hidden;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+      color: inherit;
+      cursor: pointer;
+    }
+
+    .wall-terminal {
+      width: min(1500px, 100%);
+      min-height: 100vh;
+      margin: 0 auto;
+      padding: clamp(14px, 2vw, 28px);
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 18px;
+    }
+
+    .topbar {
+      min-height: 72px;
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) auto minmax(260px, 1fr);
+      align-items: center;
+      gap: 18px;
+      padding: 0 2px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-mark,
+    .icon-button,
+    .device-icon,
+    .mode-icon {
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+    }
+
+    .brand-mark {
+      width: 46px;
+      height: 46px;
+      border-radius: var(--radius);
+      background: #172020;
+      border: 1px solid var(--line-strong);
+      color: var(--cyan);
+    }
+
+    .brand-mark i,
+    .icon-button i,
+    .metric i,
+    .scene i,
+    .device-icon i,
+    .mode-icon i,
+    .security-chip i,
+    .room-tab i,
+    .assistant-input i {
+      width: 20px;
+      height: 20px;
+      stroke-width: 2;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    .brand h1 {
+      font-size: clamp(22px, 2.2vw, 34px);
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .brand p {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .time-block {
+      text-align: center;
+      display: grid;
+      gap: 2px;
+    }
+
+    .time-block strong {
+      font-size: clamp(36px, 5vw, 64px);
+      line-height: 0.9;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    .time-block span {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .status-pill {
+      min-height: 38px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .status-pill.good {
+      color: var(--green);
+    }
+
+    .icon-button {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.055);
+      border: 1px solid var(--line);
+    }
+
+    .dashboard {
+      display: grid;
+      grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(300px, 360px);
+      gap: 18px;
+      min-height: 0;
+    }
+
+    .stack {
+      display: grid;
+      gap: 14px;
+      align-content: start;
+      min-width: 0;
+    }
+
+    .surface {
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .surface-header {
+      min-height: 52px;
+      padding: 16px 16px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .surface-title {
+      font-size: 16px;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    .surface-note {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .weather-card {
+      padding: 18px;
+      display: grid;
+      gap: 18px;
+      background:
+        linear-gradient(135deg, rgba(63, 224, 208, 0.12), transparent 42%),
+        rgba(18, 23, 24, 0.9);
+    }
+
+    .weather-main {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .weather-main strong {
+      font-size: clamp(52px, 6vw, 76px);
+      line-height: 0.9;
+      letter-spacing: 0;
+      font-weight: 620;
+    }
+
+    .weather-main span {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .weather-icon {
+      width: 58px;
+      height: 58px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      color: var(--amber);
+      background: rgba(255, 195, 90, 0.11);
+      border: 1px solid rgba(255, 195, 90, 0.28);
+    }
+
+    .weather-icon i {
+      width: 30px;
+      height: 30px;
+    }
+
+    .mini-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .mini-metric {
+      min-height: 62px;
+      padding: 10px;
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, 0.055);
+      border: 1px solid var(--line);
+      display: grid;
+      gap: 4px;
+    }
+
+    .mini-metric span {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .mini-metric strong {
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+
+    .rooms {
+      padding: 0 12px 12px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .room-tab {
+      min-height: 54px;
+      padding: 0 12px;
+      border-radius: var(--radius);
+      display: grid;
+      grid-template-columns: 34px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.045);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      text-align: left;
+      min-width: 0;
+    }
+
+    .room-tab.active {
+      color: var(--cyan);
+      border-color: rgba(63, 224, 208, 0.55);
+      background: rgba(63, 224, 208, 0.1);
+    }
+
+    .room-tab strong,
+    .room-tab span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .room-tab strong {
+      color: var(--ink);
+      font-size: 14px;
+      margin-bottom: 3px;
+    }
+
+    .room-tab span {
+      color: inherit;
+      font-size: 12px;
+    }
+
+    .room-tab em {
+      color: var(--faint);
+      font-style: normal;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .schedule {
+      padding: 0 16px 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .event {
+      display: grid;
+      grid-template-columns: 54px 1fr;
+      align-items: center;
+      gap: 12px;
+      min-height: 50px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 12px;
+    }
+
+    .event:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .event time {
+      color: var(--cyan);
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .event strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+
+    .event span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .hero {
+      position: relative;
+      min-height: 680px;
+      border-radius: var(--radius);
+      overflow: hidden;
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      background:
+        linear-gradient(180deg, rgba(8, 10, 11, 0.2), rgba(8, 10, 11, 0.76)),
+        url("https://images.unsplash.com/photo-1600210492493-0946911123ea?auto=format&fit=crop&w=1600&q=86") center/cover;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, rgba(8, 10, 11, 0.72), rgba(8, 10, 11, 0.14) 48%, rgba(8, 10, 11, 0.78));
+      pointer-events: none;
+    }
+
+    .hero-top,
+    .hero-main,
+    .scene-dock {
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero-top {
+      min-height: 72px;
+      padding: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .hero-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 32px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.36);
+      border: 1px solid rgba(255, 255, 255, 0.17);
+      color: var(--green);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .hero-kicker::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+    }
+
+    .security-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 36px;
+      padding: 0 12px;
+      border-radius: 999px;
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.13);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .hero-main {
+      padding: clamp(22px, 4vw, 54px);
+      display: grid;
+      grid-template-columns: minmax(250px, 0.7fr) minmax(260px, 0.9fr);
+      align-items: end;
+      gap: clamp(18px, 4vw, 54px);
+    }
+
+    .room-headline {
+      display: grid;
+      gap: 14px;
+    }
+
+    .room-headline h2 {
+      font-size: clamp(42px, 7vw, 92px);
+      line-height: 0.95;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-wrap: balance;
+    }
+
+    .room-headline p {
+      max-width: 420px;
+      color: #d7e0df;
+      font-size: clamp(14px, 1.5vw, 17px);
+      line-height: 1.7;
+    }
+
+    .comfort {
+      display: grid;
+      gap: 14px;
+      justify-items: end;
+      align-self: stretch;
+    }
+
+    .comfort-panel {
+      width: min(360px, 100%);
+      min-height: 300px;
+      border-radius: var(--radius);
+      background: rgba(10, 13, 14, 0.68);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      backdrop-filter: blur(18px);
+      padding: 20px;
+      display: grid;
+      align-content: space-between;
+      gap: 18px;
+    }
+
+    .comfort-value {
+      display: grid;
+      gap: 8px;
+    }
+
+    .comfort-value strong {
+      font-size: clamp(58px, 8vw, 104px);
+      line-height: 0.85;
+      letter-spacing: 0;
+      font-weight: 620;
+    }
+
+    .comfort-value strong span {
+      color: inherit;
+      font-size: inherit;
+    }
+
+    .comfort-value > span {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .slider-control {
+      display: grid;
+      gap: 12px;
+    }
+
+    .slider-label {
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--cyan);
+    }
+
+    .metric-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .metric {
+      min-height: 82px;
+      padding: 12px;
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      display: grid;
+      align-content: space-between;
+      gap: 8px;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .metric strong {
+      font-size: 20px;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .scene-dock {
+      padding: 18px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      background: linear-gradient(180deg, transparent, rgba(8, 10, 11, 0.58));
+    }
+
+    .scene {
+      min-height: 84px;
+      border-radius: var(--radius);
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+      align-content: space-between;
+      text-align: left;
+      color: var(--ink);
+      background: rgba(13, 17, 18, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      backdrop-filter: blur(12px);
+      min-width: 0;
+    }
+
+    .scene.active {
+      background: rgba(63, 224, 208, 0.16);
+      border-color: rgba(63, 224, 208, 0.66);
+      color: var(--cyan);
+    }
+
+    .scene strong,
+    .scene span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .scene strong {
+      display: block;
+      color: var(--ink);
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+
+    .scene span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .devices {
+      padding: 0 12px 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .device {
+      min-height: 68px;
+      display: grid;
+      grid-template-columns: 42px 1fr auto;
+      gap: 12px;
+      align-items: center;
+      padding: 10px;
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--line);
+      min-width: 0;
+    }
+
+    .device-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: var(--radius);
+      color: var(--cyan);
+      background: rgba(63, 224, 208, 0.1);
+      border: 1px solid rgba(63, 224, 208, 0.18);
+    }
+
+    .device-copy {
+      min-width: 0;
+    }
+
+    .device-copy strong,
+    .device-copy span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .device-copy strong {
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+
+    .device-copy span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .switch {
+      position: relative;
+      width: 48px;
+      height: 28px;
+      border-radius: 999px;
+      background: #31393b;
+      border: 1px solid var(--line);
+    }
+
+    .switch::after {
+      content: "";
+      position: absolute;
+      top: 4px;
+      left: 4px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #c7d0ce;
+      transition: transform 180ms ease, background 180ms ease;
+    }
+
+    .switch.on {
+      background: rgba(63, 224, 208, 0.32);
+      border-color: rgba(63, 224, 208, 0.72);
+    }
+
+    .switch.on::after {
+      transform: translateX(20px);
+      background: var(--cyan);
+    }
+
+    .camera-card {
+      margin: 0 12px 12px;
+      min-height: 190px;
+      border-radius: var(--radius);
+      overflow: hidden;
+      position: relative;
+      background:
+        linear-gradient(180deg, rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.45)),
+        url("https://images.unsplash.com/photo-1558002038-1055907df827?auto=format&fit=crop&w=900&q=82") center/cover;
+      border: 1px solid var(--line);
+    }
+
+    .camera-card::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image: linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+      background-size: 100% 18px;
+      opacity: 0.32;
+    }
+
+    .camera-live {
+      position: absolute;
+      z-index: 1;
+      top: 12px;
+      left: 12px;
+      min-height: 30px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: rgba(5, 7, 8, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      color: var(--green);
+      font-size: 12px;
+    }
+
+    .camera-live::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+    }
+
+    .security-modes {
+      padding: 0 12px 12px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .mode {
+      min-height: 46px;
+      border-radius: var(--radius);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.045);
+      border: 1px solid var(--line);
+    }
+
+    .mode.active {
+      color: var(--amber);
+      background: rgba(255, 195, 90, 0.1);
+      border-color: rgba(255, 195, 90, 0.48);
+    }
+
+    .energy-bars {
+      padding: 0 16px 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: 58px 1fr 48px;
+      gap: 10px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .bar {
+      height: 9px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      overflow: hidden;
+    }
+
+    .bar span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--cyan);
+    }
+
+    .bar span.amber {
+      background: var(--amber);
+    }
+
+    .bar span.coral {
+      background: var(--coral);
+    }
+
+    .assistant-input {
+      margin: 0 16px 16px;
+      min-height: 54px;
+      display: grid;
+      grid-template-columns: 1fr 40px;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 8px 8px 14px;
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, 0.055);
+      border: 1px solid var(--line);
+    }
+
+    .assistant-input span {
+      color: #d8e2e0;
+      font-size: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .mic-button {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--cyan);
+      color: #071010;
+    }
+
+    @media (max-width: 1220px) {
+      .dashboard {
+        grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+      }
+
+      .right-col {
+        grid-column: 1 / -1;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 900px) {
+      .topbar {
+        grid-template-columns: 1fr;
+        justify-items: stretch;
+      }
+
+      .time-block {
+        text-align: left;
+      }
+
+      .top-actions {
+        justify-content: flex-start;
+      }
+
+      .dashboard {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        min-height: 760px;
+      }
+
+      .hero-main {
+        grid-template-columns: 1fr;
+        align-items: end;
+      }
+
+      .comfort {
+        justify-items: stretch;
+      }
+
+      .comfort-panel {
+        width: 100%;
+      }
+
+      .right-col {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 620px) {
+      .wall-terminal {
+        padding: 12px;
+      }
+
+      .brand p,
+      .status-pill {
+        white-space: normal;
+      }
+
+      .mini-metrics,
+      .metric-row,
+      .scene-dock,
+      .security-modes {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        min-height: auto;
+      }
+
+      .hero-top {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .hero-main {
+        padding: 22px;
+      }
+
+      .room-headline h2 {
+        font-size: clamp(40px, 16vw, 62px);
+      }
+
+      .comfort-panel {
+        min-height: 270px;
+      }
+
+      .scene-dock {
+        padding: 12px;
+      }
+
+      .bar-row {
+        grid-template-columns: 52px 1fr 44px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="wall-terminal" aria-label="智能家庭终端">
+    <header class="topbar">
+      <section class="brand" aria-label="家庭">
+        <div class="brand-mark"><i data-lucide="house"></i></div>
+        <div>
+          <h1>Astra Home</h1>
+          <p>晴湾公寓 · 智能中控</p>
+        </div>
+      </section>
+
+      <section class="time-block" aria-label="当前时间">
+        <strong id="time">08:24</strong>
+        <span id="date">5月26日 星期二</span>
+      </section>
+
+      <section class="top-actions" aria-label="系统状态">
+        <div class="status-pill good"><i data-lucide="shield-check"></i><span>全屋安全</span></div>
+        <div class="status-pill"><i data-lucide="cloud-sun"></i><span>26°C 室外</span></div>
+        <button class="icon-button" type="button" aria-label="通知"><i data-lucide="bell"></i></button>
+        <button class="icon-button" type="button" aria-label="设置"><i data-lucide="settings"></i></button>
+      </section>
+    </header>
+
+    <section class="dashboard">
+      <aside class="stack left-col">
+        <section class="surface weather-card">
+          <div class="weather-main">
+            <div>
+              <strong>25°</strong>
+              <span>客厅舒适 · 湿度 42%</span>
+            </div>
+            <div class="weather-icon"><i data-lucide="sun-medium"></i></div>
+          </div>
+          <div class="mini-metrics">
+            <div class="mini-metric"><span>AQI</span><strong>32</strong></div>
+            <div class="mini-metric"><span>CO₂</span><strong>620</strong></div>
+            <div class="mini-metric"><span>噪声</span><strong>28dB</strong></div>
+          </div>
+        </section>
+
+        <section class="surface">
+          <div class="surface-header">
+            <h2 class="surface-title">房间</h2>
+            <span class="surface-note">6 区在线</span>
+          </div>
+          <div class="rooms">
+            <button class="room-tab active" type="button">
+              <i data-lucide="sofa"></i>
+              <span><strong>客厅</strong><span>主灯 68% · 空调 25°</span></span>
+              <em>舒适</em>
+            </button>
+            <button class="room-tab" type="button">
+              <i data-lucide="bed-double"></i>
+              <span><strong>主卧</strong><span>窗帘关闭 · 静音</span></span>
+              <em>睡眠</em>
+            </button>
+            <button class="room-tab" type="button">
+              <i data-lucide="utensils"></i>
+              <span><strong>厨房</strong><span>排风运行 · 烟感正常</span></span>
+              <em>运行</em>
+            </button>
+            <button class="room-tab" type="button">
+              <i data-lucide="book-open"></i>
+              <span><strong>书房</strong><span>台灯 42% · 空气优</span></span>
+              <em>安静</em>
+            </button>
+          </div>
+        </section>
+
+        <section class="surface">
+          <div class="surface-header">
+            <h2 class="surface-title">自动化</h2>
+            <span class="surface-note">今日</span>
+          </div>
+          <div class="schedule">
+            <article class="event">
+              <time>18:30</time>
+              <div><strong>回家场景</strong><span>玄关灯、热水、空调</span></div>
+            </article>
+            <article class="event">
+              <time>21:15</time>
+              <div><strong>影音模式</strong><span>投影、遮光帘、氛围灯</span></div>
+            </article>
+            <article class="event">
+              <time>23:40</time>
+              <div><strong>夜间布防</strong><span>门锁复核、周界检测</span></div>
+            </article>
+          </div>
+        </section>
+      </aside>
+
+      <section class="hero" aria-label="客厅主控">
+        <div class="hero-top">
+          <span class="hero-kicker">LIVE · 客厅</span>
+          <span class="security-chip"><i data-lucide="lock-keyhole"></i> 在家模式</span>
+        </div>
+
+        <section class="hero-main">
+          <div class="room-headline">
+            <h2>客厅</h2>
+            <p>灯光、温度、影音和安防已同步到当前场景。南向窗帘保持 72%，主灯为暖白。</p>
+          </div>
+
+          <aside class="comfort-panel" aria-label="环境控制">
+            <div class="comfort-value">
+              <strong><span id="temp-value">25</span>°</strong>
+              <span>自动恒温 · 新风低速</span>
+            </div>
+
+            <label class="slider-control">
+              <span class="slider-label"><span>温度</span><span id="temp-label">25°C</span></span>
+              <input id="temp-slider" type="range" min="18" max="30" value="25" aria-label="调节客厅温度" />
+            </label>
+
+            <div class="metric-row">
+              <div class="metric"><i data-lucide="lightbulb"></i><span>灯光</span><strong>68%</strong></div>
+              <div class="metric"><i data-lucide="wind"></i><span>空气</span><strong>优</strong></div>
+              <div class="metric"><i data-lucide="zap"></i><span>功耗</span><strong>1.8kW</strong></div>
+            </div>
+          </aside>
+        </section>
+
+        <div class="scene-dock" aria-label="场景模式">
+          <button class="scene active" type="button">
+            <i data-lucide="sunrise"></i>
+            <span><strong>晨起</strong><span>窗帘 · 音乐 · 咖啡</span></span>
+          </button>
+          <button class="scene" type="button">
+            <i data-lucide="armchair"></i>
+            <span><strong>会客</strong><span>主灯 · 空调 · 氛围</span></span>
+          </button>
+          <button class="scene" type="button">
+            <i data-lucide="clapperboard"></i>
+            <span><strong>观影</strong><span>投影 · 遮光 · 低照度</span></span>
+          </button>
+          <button class="scene" type="button">
+            <i data-lucide="moon"></i>
+            <span><strong>睡眠</strong><span>静音 · 布防 · 夜灯</span></span>
+          </button>
+        </div>
+      </section>
+
+      <aside class="stack right-col">
+        <section class="surface">
+          <div class="surface-header">
+            <h2 class="surface-title">常用设备</h2>
+            <span class="surface-note"><span id="online-count">18</span>/21</span>
+          </div>
+          <div class="devices">
+            <article class="device">
+              <div class="device-icon"><i data-lucide="lamp-ceiling"></i></div>
+              <div class="device-copy"><strong>客厅主灯</strong><span>亮度 68% · 暖白</span></div>
+              <button class="switch on" type="button" aria-label="客厅主灯开关"></button>
+            </article>
+            <article class="device">
+              <div class="device-icon"><i data-lucide="air-vent"></i></div>
+              <div class="device-copy"><strong>中央空调</strong><span>制冷 · 低风速</span></div>
+              <button class="switch on" type="button" aria-label="中央空调开关"></button>
+            </article>
+            <article class="device">
+              <div class="device-icon"><i data-lucide="curtains"></i></div>
+              <div class="device-copy"><strong>南向窗帘</strong><span>开启 72%</span></div>
+              <button class="switch on" type="button" aria-label="南向窗帘开关"></button>
+            </article>
+            <article class="device">
+              <div class="device-icon"><i data-lucide="speaker"></i></div>
+              <div class="device-copy"><strong>客厅音响</strong><span>爵士电台 · 音量 32</span></div>
+              <button class="switch" type="button" aria-label="客厅音响开关"></button>
+            </article>
+          </div>
+        </section>
+
+        <section class="surface">
+          <div class="surface-header">
+            <h2 class="surface-title">门厅安防</h2>
+            <span class="surface-note">实时</span>
+          </div>
+          <div class="camera-card" role="img" aria-label="门厅摄像头画面">
+            <span class="camera-live">LIVE</span>
+          </div>
+          <div class="security-modes">
+            <button class="mode active" type="button"><i data-lucide="house"></i><span>在家</span></button>
+            <button class="mode" type="button"><i data-lucide="lock"></i><span>离家</span></button>
+            <button class="mode" type="button"><i data-lucide="shield-alert"></i><span>夜间</span></button>
+          </div>
+        </section>
+
+        <section class="surface">
+          <div class="surface-header">
+            <h2 class="surface-title">能源</h2>
+            <span class="surface-note">12.8 kWh</span>
+          </div>
+          <div class="energy-bars">
+            <div class="bar-row"><span>空调</span><div class="bar"><span style="width: 72%"></span></div><span>4.8</span></div>
+            <div class="bar-row"><span>厨电</span><div class="bar"><span class="amber" style="width: 46%"></span></div><span>2.1</span></div>
+            <div class="bar-row"><span>照明</span><div class="bar"><span style="width: 34%"></span></div><span>0.8</span></div>
+            <div class="bar-row"><span>影音</span><div class="bar"><span class="coral" style="width: 28%"></span></div><span>0.6</span></div>
+          </div>
+        </section>
+
+        <section class="surface">
+          <div class="surface-header">
+            <h2 class="surface-title">语音助手</h2>
+            <span class="surface-note">待命</span>
+          </div>
+          <div class="assistant-input">
+            <span>把客厅切到观影模式</span>
+            <button class="mic-button" type="button" aria-label="语音输入"><i data-lucide="mic"></i></button>
+          </div>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const timeEl = document.querySelector("#time");
+    const dateEl = document.querySelector("#date");
+    const tempSlider = document.querySelector("#temp-slider");
+    const tempValue = document.querySelector("#temp-value");
+    const tempLabel = document.querySelector("#temp-label");
+    const onlineCount = document.querySelector("#online-count");
+
+    function updateTime() {
+      const now = new Date();
+      const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+      timeEl.textContent = now.toLocaleTimeString("zh-CN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false
+      });
+      dateEl.textContent = `${now.getMonth() + 1}月${now.getDate()}日 ${weekdays[now.getDay()]}`;
+    }
+
+    function setTemperature(value) {
+      tempValue.textContent = value;
+      tempLabel.textContent = `${value}°C`;
+    }
+
+    document.querySelectorAll(".scene").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll(".scene").forEach((item) => item.classList.remove("active"));
+        button.classList.add("active");
+      });
+    });
+
+    document.querySelectorAll(".room-tab").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll(".room-tab").forEach((item) => item.classList.remove("active"));
+        button.classList.add("active");
+      });
+    });
+
+    document.querySelectorAll(".mode").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll(".mode").forEach((item) => item.classList.remove("active"));
+        button.classList.add("active");
+      });
+    });
+
+    document.querySelectorAll(".switch").forEach((button) => {
+      button.addEventListener("click", () => {
+        button.classList.toggle("on");
+        onlineCount.textContent = String(14 + document.querySelectorAll(".switch.on").length);
+      });
+    });
+
+    tempSlider.addEventListener("input", (event) => setTemperature(event.target.value));
+    setTemperature(tempSlider.value);
+    updateTime();
+    setInterval(updateTime, 30000);
+
+    if (window.lucide) {
+      window.lucide.createIcons();
+    }
+  </script>
+</body>
+</html>

@@ -87,13 +87,13 @@ def test_weather_uses_plain_http_to_avoid_tls_dma_pressure_by_default() -> None:
 def test_homecare_weather_metrics_use_fixed_row_layout_to_avoid_overlap() -> None:
     source = read_text("components/apps/homecare_hub/HomeCareHub.cpp")
 
-    assert "lv_obj_t *weather_metrics = lv_obj_create(weather);" in source
-    assert "lv_obj_set_size(weather_metrics, third_left_w - 28, 84);" in source
-    assert "lv_obj_align(weather_metrics, LV_ALIGN_BOTTOM_LEFT, 0, 0);" in source
-    assert "lv_obj_set_flex_flow(weather_metrics, LV_FLEX_FLOW_COLUMN);" in source
-    assert "lv_obj_t *weather_rows[3]" in source
-    assert "_humidity_label = createLabel(weather_rows[1]" in source
-    assert "_air_label = createLabel(weather_rows[2]" in source
+    assert "lv_obj_t *mini_metrics = lv_obj_create(weather);" in source
+    assert "lv_obj_set_size(mini_metrics, left_w - 24, 34);" in source
+    assert "lv_obj_align(mini_metrics, LV_ALIGN_BOTTOM_MID, 0, 0);" in source
+    assert "lv_obj_set_flex_flow(mini_metrics, LV_FLEX_FLOW_ROW);" in source
+    assert 'const char *metric_names[] = {"AQI", "CO2", "噪声"};' in source
+    assert "lv_obj_t *metric = createPanel(mini_metrics, 66, 34, HUB_PANEL_SOLID_COLOR);" in source
+    assert "lv_obj_align(*metric_values[i], LV_ALIGN_BOTTOM_RIGHT, 0, 1);" in source
     assert "lv_obj_align(_humidity_label, LV_ALIGN_TOP_LEFT, 26, 130);" not in source
     assert "lv_obj_align(_air_label, LV_ALIGN_BOTTOM_LEFT, 26, 0);" not in source
 

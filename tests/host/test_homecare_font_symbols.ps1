@@ -1,7 +1,12 @@
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path))
-$sourcePath = Join-Path $root "components/apps/homecare_hub/HomeCareHub.cpp"
+$sourcePaths = @(
+    (Join-Path $root "components/apps/homecare_hub/HomeCareHub.cpp"),
+    (Join-Path $root "components/apps/homecare_hub/HomeCareWeather.cpp"),
+    (Join-Path $root "components/apps/homecare_hub/HomeCareWeatherCity.cpp"),
+    (Join-Path $root "components/apps/setting/Setting.cpp")
+)
 $fontDir = Join-Path $root "components/apps/homecare_hub/fonts"
 
 function Get-CppStringLiteralText {
@@ -65,9 +70,18 @@ function Get-CppStringLiteralText {
     return $result.ToString()
 }
 
-$source = Get-Content -LiteralPath $sourcePath -Raw -Encoding UTF8
-$stringText = Get-CppStringLiteralText $source
-$needed = [regex]::Matches($stringText, '[\p{IsCJKUnifiedIdeographs}\u3000-\u303F\uFF00-\uFFEF]') |
+foreach ($sourcePath in $sourcePaths) {
+    if (-not (Test-Path -LiteralPath $sourcePath)) {
+        throw "Font source not found: $sourcePath"
+    }
+}
+
+$stringText = ""
+foreach ($sourcePath in $sourcePaths) {
+    $source = Get-Content -LiteralPath $sourcePath -Raw -Encoding UTF8
+    $stringText += Get-CppStringLiteralText $source
+}
+$needed = [regex]::Matches($stringText, '[^\u0020-\u007E]') |
     ForEach-Object { $_.Value } |
     Sort-Object -Unique
 
@@ -99,4 +113,4 @@ if ($failed) {
     exit 1
 }
 
-Write-Host "All HomeCareHub CJK glyphs are present in generated font symbols."
+Write-Host "All HomeCareHub non-ASCII glyphs are present in generated font symbols."

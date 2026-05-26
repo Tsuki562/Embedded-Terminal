@@ -85,13 +85,13 @@ foreach ($sourcePath in $sourcePaths) {
     $source = Get-Content -LiteralPath $sourcePath -Raw -Encoding UTF8
     $stringText += Get-CppStringLiteralText $source
 }
-$symbols = [regex]::Matches($stringText, '[\p{IsCJKUnifiedIdeographs}\u3000-\u303F\uFF00-\uFFEF]') |
+$symbols = [regex]::Matches($stringText, '[^\u0020-\u007E]') |
     ForEach-Object { $_.Value } |
     Sort-Object -Unique
 $symbolText = $symbols -join ''
 
 if (-not $symbolText) {
-    throw "No CJK symbols found in font source files"
+    throw "No non-ASCII symbols found in font source files"
 }
 
 foreach ($size in 14, 16, 20, 28) {
@@ -113,4 +113,4 @@ foreach ($size in 14, 16, 20, 28) {
     }
 }
 
-Write-Host "Generated HomeCareHub fonts with $($symbols.Count) CJK symbols."
+Write-Host "Generated HomeCareHub fonts with $($symbols.Count) non-ASCII symbols."

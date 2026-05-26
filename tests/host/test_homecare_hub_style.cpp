@@ -1,63 +1,83 @@
-#include <cassert>
+#include <cstdlib>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <string>
 
 static std::string read_file(const char *path)
 {
     std::ifstream input(path, std::ios::binary);
-    assert(input.good());
+    if (!input.good()) {
+        std::cerr << "Could not read " << path << "\n";
+        std::exit(1);
+    }
     std::ostringstream buffer;
     buffer << input.rdbuf();
     return buffer.str();
 }
 
-static void test_homecare_terminal_uses_rich_lvgl_style_properties()
+static void require_contains(const std::string &source, const char *needle)
 {
-    const std::string source = read_file("components/apps/homecare_hub/HomeCareHub.cpp");
-
-    assert(source.find("lv_obj_set_style_bg_grad_color(_root") != std::string::npos);
-    assert(source.find("lv_obj_set_style_bg_grad_color(panel") != std::string::npos);
-    assert(source.find("lv_obj_set_style_shadow_width(panel") != std::string::npos);
-    assert(source.find("lv_obj_set_style_outline_width(panel") != std::string::npos);
-    assert(source.find("LV_STATE_PRESSED") != std::string::npos);
+    if (source.find(needle) == std::string::npos) {
+        std::cerr << "Missing expected source fragment: " << needle << "\n";
+        std::exit(1);
+    }
 }
 
-static void test_homecare_terminal_uses_lighter_status_treatments()
+static void test_homecare_terminal_uses_index_inspired_palette_for_7inch_screen()
 {
     const std::string source = read_file("components/apps/homecare_hub/HomeCareHub.cpp");
 
-    assert(source.find("#define HUB_PANEL_COLOR        lv_color_hex(0x112236)") != std::string::npos);
-    assert(source.find("#define HUB_PANEL_2_COLOR      lv_color_hex(0x0D1B2A)") != std::string::npos);
-    assert(source.find("lv_obj_set_size(accent, 3, lv_obj_get_height(obj));") != std::string::npos);
-    assert(source.find("lv_obj_set_style_border_color(obj, HUB_LINE_COLOR, 0);") != std::string::npos);
-    assert(source.find("lv_obj_set_style_bg_grad_color(obj, lv_color_mix(lv_color_white(), color, 54), LV_PART_INDICATOR);") != std::string::npos);
-    assert(source.find("lv_obj_set_style_bg_opa(_mode_label, LV_OPA_20, 0);") != std::string::npos);
-    assert(source.find("lv_obj_set_style_bg_opa(_event_level_labels[i], LV_OPA_20, 0);") != std::string::npos);
-    assert(source.find("lv_obj_set_size(event_dot, 6, 6);") != std::string::npos);
-    assert(source.find("const char *button_icons[] = {LV_SYMBOL_REFRESH, LV_SYMBOL_HOME, LV_SYMBOL_EYE_OPEN, LV_SYMBOL_CALL};") != std::string::npos);
-    assert(source.find("lv_obj_t *weather_metrics = lv_obj_create(weather);") != std::string::npos);
-    assert(source.find("lv_obj_t *weather_rows[3] = {};") != std::string::npos);
-    assert(source.find("lv_label_set_text(icon, weather_symbols[i]);") != std::string::npos);
+    require_contains(source, "#define HUB_BG_COLOR           lv_color_hex(0x0C0F10)");
+    require_contains(source, "#define HUB_PANEL_COLOR        lv_color_hex(0x121718)");
+    require_contains(source, "#define HUB_PANEL_SOLID_COLOR  lv_color_hex(0x151B1D)");
+    require_contains(source, "#define HUB_CYAN_COLOR         lv_color_hex(0x3FE0D0)");
+    require_contains(source, "#define HUB_GREEN_COLOR        lv_color_hex(0x9BE86F)");
+    require_contains(source, "#define HUB_AMBER_COLOR        lv_color_hex(0xFFC35A)");
+    require_contains(source, "#define HUB_CORAL_COLOR        lv_color_hex(0xFF7F73)");
+    require_contains(source, "lv_obj_set_style_shadow_width(panel, 18, 0);");
+    require_contains(source, "LV_STATE_PRESSED");
 }
 
-static void test_third_page_uses_balanced_two_column_layout()
+static void test_homecare_terminal_uses_7inch_single_screen_sections()
 {
     const std::string source = read_file("components/apps/homecare_hub/HomeCareHub.cpp");
 
-    assert(source.find("const int third_action_h = 42;") != std::string::npos);
-    assert(source.find("const int third_content_h = page_h - third_action_h - third_gap;") != std::string::npos);
-    assert(source.find("const int third_left_w = (page_w - 24 - third_gap) * 42 / 100;") != std::string::npos);
-    assert(source.find("const int third_right_w = page_w - 24 - third_gap - third_left_w;") != std::string::npos);
-    assert(source.find("lv_obj_t *event_area = createPanel(right, third_right_w, third_content_h, HUB_PANEL_2_COLOR);") != std::string::npos);
-    assert(source.find("const int event_h = (third_content_h - 56 - event_gap * 3) / 4;") != std::string::npos);
-    assert(source.find("lv_obj_align(event_row, LV_ALIGN_TOP_LEFT, 0, 42 + i * (event_h + event_gap));") != std::string::npos);
+    require_contains(source, "const int left_w = 240;");
+    require_contains(source, "const int right_w = 240;");
+    require_contains(source, "const int center_w = content_w - left_w - right_w - gap * 2;");
+    require_contains(source, "lv_obj_set_size(top_actions, 310, 40);");
+    require_contains(source, "const int devices_h = 158;");
+    require_contains(source, "const int security_h = 108;");
+    require_contains(source, "const int energy_h = 96;");
+    require_contains(source, "const int assistant_h = content_h - devices_h - security_h - energy_h - gap * 3;");
+    require_contains(source, "Astra Home");
+    require_contains(source, "晴湾公寓 · 智能中控");
+    require_contains(source, "客厅主控");
+    require_contains(source, "常用设备");
+    require_contains(source, "门厅安防");
+    require_contains(source, "语音助手");
+    require_contains(source, "createCameraPreview(security");
+}
+
+static void test_homecare_terminal_keeps_index_like_cards_and_controls()
+{
+    const std::string source = read_file("components/apps/homecare_hub/HomeCareHub.cpp");
+
+    require_contains(source, "const char *room_names[] = {\"客厅\", \"主卧\", \"厨房\", \"书房\"};");
+    require_contains(source, "const char *scene_names[] = {\"晨起\", \"会客\", \"观影\", \"睡眠\"};");
+    require_contains(source, "const char *device_names[] = {\"客厅主灯\", \"中央空调\", \"南向窗帘\", \"客厅音响\"};");
+    require_contains(source, "const char *energy_names[] = {\"空调\", \"厨电\", \"照明\", \"影音\"};");
+    require_contains(source, "lv_obj_set_style_bg_color(scene, i == 0 ? HUB_CYAN_COLOR : HUB_PANEL_SOLID_COLOR, 0);");
+    require_contains(source, "lv_obj_t *temp_arc = lv_arc_create(comfort);");
+    require_contains(source, "lv_obj_t *mic = lv_btn_create(assistant);");
+    require_contains(source, "lv_obj_add_event_cb(scene, scenarioEventCb, LV_EVENT_CLICKED, this);");
 }
 
 int main()
 {
-    test_homecare_terminal_uses_rich_lvgl_style_properties();
-    test_homecare_terminal_uses_lighter_status_treatments();
-    test_third_page_uses_balanced_two_column_layout();
+    test_homecare_terminal_uses_index_inspired_palette_for_7inch_screen();
+    test_homecare_terminal_uses_7inch_single_screen_sections();
+    test_homecare_terminal_keeps_index_like_cards_and_controls();
     return 0;
 }

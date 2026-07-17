@@ -1,3 +1,11 @@
+/**
+ * @file HomeCareWeather.cpp
+ * @brief 天气服务模块实现
+ *
+ * 后台任务定期从 Open-Meteo API 获取天气预报和空气质量数据，
+ * 解析 JSON 响应后更新共享快照，供 UI 层读取。
+ * 支持网络事件驱动的即时刷新和定时轮询两种模式。
+ */
 #include "HomeCareWeather.hpp"
 #include "HomeCareWeatherCity.hpp"
 
@@ -18,10 +26,12 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
+/* 编译期开关：可通过 menuconfig 或此处默认值控制天气功能是否启用 */
 #ifndef CONFIG_HOMECARE_WEATHER_ENABLE
 #define CONFIG_HOMECARE_WEATHER_ENABLE 1
 #endif
 
+/* 默认经纬度（杭州），仅在城市模块未提供坐标时回退使用 */
 #ifndef CONFIG_HOMECARE_WEATHER_LATITUDE
 #define CONFIG_HOMECARE_WEATHER_LATITUDE "30.2741"
 #endif
@@ -30,35 +40,55 @@
 #define CONFIG_HOMECARE_WEATHER_LONGITUDE "120.1551"
 #endif
 
+/* 天气数据自动刷新间隔（分钟） */
 #ifndef CONFIG_HOMECARE_WEATHER_REFRESH_MINUTES
 #define CONFIG_HOMECARE_WEATHER_REFRESH_MINUTES 15
 #endif
 
 namespace {
 
-static const char *TAG = "homecare_weather";
-static constexpr size_t kHttpBufferSize = 1024;
-static constexpr size_t kMinTlsDmaFree = 8192;
-static constexpr size_t kMinTlsDmaLargest = 4096;
-static constexpr uint32_t kRequestTimeoutMs = 10000;
-static constexpr uint32_t kTaskStackSize = 6144;
-static constexpr UBaseType_t kTaskPriority = 2;
+/* ---------- 常量定义 ---------- */
 
+static const char *TAG = "homecare_weather";
+
+static constexpr size_t kHttpBufferSize = 1024;   /**< HTTP 响应缓冲区大小（字节） */
+static constexpr size_t kMinTlsDmaFree = 8192;    /**< TLS 连接所需的最小 DMA 空闲内存 */
+static constexpr size_t kMinTlsDmaLargest = 4096; /**< TLS 连接所需的最小连续 DMA 块 */
+static constexpr uint32_t kRequestTimeoutMs = 10000; /**< HTTP 请求超时时间（毫秒） */
+static constexpr uint32_t kTaskStackSize = 6144;  /**< 天气任务栈大小（字节） */
+static constexpr UBaseType_t kTaskPriority = 2;   /**< 天气任务优先级（较低，不阻塞 UI） */
+
+/* ---------- 内部数据结构 ---------- */
+
+/**
+ * @struct ParsedWeatherData
+ * @brief HTTP 响应解析后的中间数据
+ *
+ * 存储从天气预报和空气质量两个 API 响应中解析出的数值，
+ * 由 build_snapshot_from_parsed() 转换为最终的 HomeCareWeatherSnapshot。
+ */
 struct ParsedWeatherData {
-    int temperature_c;
-    int humidity_percent;
-    int weather_code;
-    bool is_day;
-    bool has_air_quality;
-    int us_aqi;
+    int temperature_c;     /**< 温度（摄氏度，取整） */
+    int humidity_percent;  /**< 相对湿度（百分比，取整） */
+    int weather_code;      /**< WMO 天气编码 */
+    bool is_day;           /**< 当前是否为白天 */
+    bool has_air_quality;  /**< 是否成功获取到空气质量数据 */
+    int us_aqi;            /**< 美国标准 AQI 指数 */
 };
 
-static SemaphoreHandle_t s_lock = nullptr;
-static TaskHandle_t s_task = nullptr;
-static bool s_initialized = false;
-static volatile bool s_network_ready = false;
-static HomeCareWeatherSnapshot s_snapshot = {};
+/* ---------- 模块全局状态 ---------- */
 
+static SemaphoreHandle_t s_lock = nullptr;        /**< 互斥锁，保护 s_snapshot */
+static TaskHandle_t s_task = nullptr;             /**< 天气后台任务句柄 */
+static bool s_initialized = false;                /**< 服务是否已初始化 */
+static volatile bool s_network_ready = false;     /**< 网络是否就绪（IP_EVENT_STA_GOT_IP 后置 true） */
+static HomeCareWeatherSnapshot s_snapshot = {};   /**< 共享天气快照，由后台任务写入、UI 层读取 */
+
+/* ---------- 内存诊断工具函数 ---------- */
+
+/**
+ * @brief 打印内部 DMA 堆的使用情况，用于调试 TLS 连接内存不足问题
+ */
 static void log_internal_dma_heap(const char *label)
 {
     ESP_LOGI(TAG, "%s: dma_free=%u dma_largest=%u internal_free=%u internal_largest=%u",
@@ -69,6 +99,12 @@ static void log_internal_dma_heap(const char *label)
              static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
 }
 
+/**
+ * @brief 检查是否有足够的 DMA 内存用于 TLS 握手
+ *
+ * ESP32 的 TLS（mbedTLS）要求 DMA 可达的内部 SRAM。若剩余不足，
+ * 跳过本次请求以避免崩溃，等待下次刷新。
+ */
 static bool has_enough_dma_for_tls(const char *label)
 {
     const size_t dma_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
@@ -83,12 +119,34 @@ static bool has_enough_dma_for_tls(const char *label)
     return true;
 }
 
+/** @brief 判断 URL 是否使用 TLS（https:// / mqtts:// / wss://） */
 static bool url_uses_tls(const char *url)
 {
     return url != nullptr &&
            (std::strncmp(url, "https://", 8) == 0 || std::strncmp(url, "mqtts://", 8) == 0 || std::strncmp(url, "wss://", 6) == 0);
 }
 
+static bool station_has_ip(void)
+{
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (netif == nullptr) {
+        return false;
+    }
+
+    esp_netif_ip_info_t ip_info = {};
+    if (esp_netif_get_ip_info(netif, &ip_info) != ESP_OK) {
+        return false;
+    }
+    return ip_info.ip.addr != 0;
+}
+
+/* ---------- 快照辅助函数 ---------- */
+
+/**
+ * @brief 将快照设为"加载中"占位状态
+ *
+ * 在服务初始化后、首次成功获取天气数据前显示。
+ */
 static void set_loading_snapshot(HomeCareWeatherSnapshot *snapshot)
 {
     if (snapshot == nullptr) {
@@ -105,6 +163,7 @@ static void set_loading_snapshot(HomeCareWeatherSnapshot *snapshot)
     std::snprintf(snapshot->air_quality, sizeof(snapshot->air_quality), "空气 --");
 }
 
+/** @brief 比较两个快照内容是否相同（不含 revision 字段） */
 static bool snapshots_equal(const HomeCareWeatherSnapshot &lhs, const HomeCareWeatherSnapshot &rhs)
 {
     return lhs.has_live_data == rhs.has_live_data &&
@@ -117,6 +176,11 @@ static bool snapshots_equal(const HomeCareWeatherSnapshot &lhs, const HomeCareWe
            std::strcmp(lhs.air_quality, rhs.air_quality) == 0;
 }
 
+/**
+ * @brief 将新快照提交到全局 s_snapshot（调用者需持有 s_lock）
+ *
+ * 若内容与上一次相同则不递增 revision，避免 UI 无意义重绘。
+ */
 static void commit_snapshot_locked(const HomeCareWeatherSnapshot &next_snapshot)
 {
     HomeCareWeatherSnapshot snapshot = next_snapshot;
@@ -128,6 +192,9 @@ static void commit_snapshot_locked(const HomeCareWeatherSnapshot &next_snapshot)
     s_snapshot = snapshot;
 }
 
+/* ---------- JSON 解析辅助 ---------- */
+
+/** @brief 从 cJSON 节点安全读取布尔值（兼容 bool 和 number 类型） */
 static bool json_get_bool(cJSON *item, bool *out)
 {
     if (item == nullptr || out == nullptr) {
@@ -145,6 +212,12 @@ static bool json_get_bool(cJSON *item, bool *out)
     return false;
 }
 
+/**
+ * @brief 将 WMO 天气编码转换为中文天气描述
+ *
+ * WMO 天气编码参见 Open-Meteo 文档。
+ * 部分编码（如 0、1）会根据白天/夜晚返回不同文本。
+ */
 static const char *weather_code_to_text(int weather_code, bool is_day)
 {
     switch (weather_code) {
@@ -202,6 +275,12 @@ static const char *weather_code_to_text(int weather_code, bool is_day)
     }
 }
 
+/**
+ * @brief 根据美国标准 AQI 值映射为等级（1~6）
+ *
+ * 等级: 1=优(0-50), 2=良(51-100), 3=轻度(101-150),
+ *       4=中度(151-200), 5=重度(201-300), 6=严重(>300)
+ */
 static uint8_t air_quality_level_from_aqi(int us_aqi)
 {
     if (us_aqi < 0) {
@@ -225,6 +304,7 @@ static uint8_t air_quality_level_from_aqi(int us_aqi)
     return 6;
 }
 
+/** @brief 将空气质量等级转换为中文文本 */
 static const char *air_quality_text_from_level(uint8_t level)
 {
     switch (level) {
@@ -245,6 +325,13 @@ static const char *air_quality_text_from_level(uint8_t level)
     }
 }
 
+/* ---------- HTTP 请求与数据获取 ---------- */
+
+/**
+ * @brief 根据当前选中城市的坐标构建 Open-Meteo API URL
+ *
+ * 生成两个 URL：天气预报（含温度、湿度、天气编码、昼夜）和空气质量（US AQI）。
+ */
 static void build_weather_urls(char *forecast_url, size_t forecast_size,
                                char *air_url, size_t air_size)
 {
@@ -267,6 +354,12 @@ static void build_weather_urls(char *forecast_url, size_t forecast_size,
     }
 }
 
+/**
+ * @brief 执行 HTTP GET 请求并将响应体写入缓冲区
+ *
+ * 自动根据 URL scheme 选择 TCP 或 TLS 传输。仅接受 200 状态码。
+ * 响应超出缓冲区大小时返回失败，防止截断数据导致 JSON 解析错误。
+ */
 static esp_err_t http_get_json(const char *url, char *response, size_t response_size)
 {
     if (url == nullptr || response == nullptr || response_size < 2) {
@@ -305,6 +398,7 @@ static esp_err_t http_get_json(const char *url, char *response, size_t response_
         return ESP_FAIL;
     }
 
+    /* 分块读取响应体 */
     size_t total = 0;
     int read_len = 0;
     while ((read_len = esp_http_client_read(client, response + total,
@@ -325,6 +419,11 @@ static esp_err_t http_get_json(const char *url, char *response, size_t response_
     return ESP_OK;
 }
 
+/**
+ * @brief 解析天气预报 API 的 JSON 响应
+ *
+ * 提取 current 字段下的 temperature_2m、relative_humidity_2m、weather_code、is_day。
+ */
 static bool parse_weather_json(const char *json, ParsedWeatherData *out)
 {
     if (json == nullptr || out == nullptr) {
@@ -358,6 +457,11 @@ static bool parse_weather_json(const char *json, ParsedWeatherData *out)
     return ok;
 }
 
+/**
+ * @brief 解析空气质量 API 的 JSON 响应
+ *
+ * 提取 current.us_aqi 字段。空气质量为可选数据，获取失败不影响天气主数据。
+ */
 static bool parse_air_quality_json(const char *json, ParsedWeatherData *out)
 {
     if (json == nullptr || out == nullptr) {
@@ -382,6 +486,7 @@ static bool parse_air_quality_json(const char *json, ParsedWeatherData *out)
     return ok;
 }
 
+/** @brief 将解析后的数值数据转换为快照的格式化文本字段 */
 static void build_snapshot_from_parsed(const ParsedWeatherData &parsed, HomeCareWeatherSnapshot *snapshot)
 {
     if (snapshot == nullptr) {
@@ -400,6 +505,11 @@ static void build_snapshot_from_parsed(const ParsedWeatherData &parsed, HomeCare
                   air_quality_text_from_level(snapshot->air_quality_level));
 }
 
+/**
+ * @brief 当无实时数据或城市切换后，将快照降级为离线/占位状态
+ *
+ * 由 fetch_and_update_snapshot 失败时调用，确保 UI 始终有可显示的内容。
+ */
 static void update_snapshot_if_unavailable(void)
 {
     if (s_lock == nullptr) {
@@ -427,6 +537,13 @@ static void update_snapshot_if_unavailable(void)
     xSemaphoreGive(s_lock);
 }
 
+/**
+ * @brief 执行一次完整的天气数据获取流程
+ *
+ * 步骤: 构建 URL → 分配缓冲区（优先 PSRAM） → HTTP GET 天气预报 → 解析 →
+ *       HTTP GET 空气质量（可选） → 解析 → 构建快照 → 提交到全局状态。
+ * 空气质量获取失败不会导致整体失败。
+ */
 static esp_err_t fetch_and_update_snapshot(void)
 {
     ParsedWeatherData parsed = {};
@@ -438,6 +555,7 @@ static esp_err_t fetch_and_update_snapshot(void)
 
     build_weather_urls(forecast_url, sizeof(forecast_url), air_url, sizeof(air_url));
 
+    /* 优先从 PSRAM 分配缓冲区以节省宝贵的内部 SRAM */
     json_buffer = static_cast<char *>(heap_caps_malloc(kHttpBufferSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (json_buffer == nullptr) {
         json_buffer = static_cast<char *>(heap_caps_malloc(kHttpBufferSize, MALLOC_CAP_8BIT));
@@ -447,7 +565,12 @@ static esp_err_t fetch_and_update_snapshot(void)
     }
     json_buffer[0] = '\0';
 
+    /* 获取天气预报数据 */
     log_internal_dma_heap("before weather forecast fetch");
+    if (!has_enough_dma_for_tls("forecast")) {
+        err = ESP_ERR_NO_MEM;
+        goto cleanup;
+    }
     if (url_uses_tls(forecast_url) && !has_enough_dma_for_tls("forecast")) {
         err = ESP_ERR_NO_MEM;
         goto cleanup;
@@ -464,14 +587,16 @@ static esp_err_t fetch_and_update_snapshot(void)
         goto cleanup;
     }
 
+    /* 获取空气质量数据（可选，失败不影响天气主数据） */
     json_buffer[0] = '\0';
-    if ((!url_uses_tls(air_url) || has_enough_dma_for_tls("air")) &&
+    if (has_enough_dma_for_tls("air") &&
         http_get_json(air_url, json_buffer, kHttpBufferSize) == ESP_OK) {
         (void)parse_air_quality_json(json_buffer, &parsed);
     } else {
         parsed.has_air_quality = false;
     }
 
+    /* 构建快照并提交 */
     build_snapshot_from_parsed(parsed, &next_snapshot);
 
     if (s_lock != nullptr && xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
@@ -492,6 +617,15 @@ cleanup:
     return err;
 }
 
+/* ---------- 后台任务与网络事件 ---------- */
+
+/**
+ * @brief 天气后台任务主循环
+ *
+ * 网络未就绪时阻塞等待通知；网络就绪后先延迟 15 秒（让 MQTT 的 TLS 握手先完成，
+ * 避免两个 TLS 连接同时争抢稀缺的 DMA 内存），然后执行天气获取。
+ * 获取失败时降级为离线状态。
+ */
 static void weather_task(void *arg)
 {
     (void)arg;
@@ -512,8 +646,8 @@ static void weather_task(void *arg)
             continue;
         }
 
-        // MQTT also starts on GOT_IP. Give its TLS handshake a short head start
-        // so weather HTTPS does not contend for scarce internal DMA-capable RAM.
+        /* MQTT 也在 GOT_IP 事件后启动。延迟 15 秒让其 TLS 握手先完成，
+         * 避免天气 HTTPS 请求与 MQTT 同时争抢内部 DMA 可达的 SRAM。 */
         vTaskDelay(pdMS_TO_TICKS(15000));
         if (!s_network_ready) {
             continue;
@@ -525,6 +659,12 @@ static void weather_task(void *arg)
     }
 }
 
+/**
+ * @brief Wi-Fi/IP 事件回调
+ *
+ * 获取 IP 后标记网络就绪并唤醒天气任务；
+ * 断开连接后清除标记并唤醒任务使其进入等待状态。
+ */
 static void network_event_handler(void *handler_args, esp_event_base_t event_base,
                                   int32_t event_id, void *event_data)
 {
@@ -546,6 +686,8 @@ static void network_event_handler(void *handler_args, esp_event_base_t event_bas
 
 }  // namespace
 
+/* ========== 对外接口实现 ========== */
+
 esp_err_t homecare_weather_service_init(void)
 {
     if (s_initialized) {
@@ -556,8 +698,7 @@ esp_err_t homecare_weather_service_init(void)
     s_initialized = true;
     return ESP_OK;
 #else
-    // The weather task resolves DNS as soon as it is notified, so make sure
-    // lwIP/tcpip is initialized before any HTTP work can start.
+    /* 确保 lwIP/tcpip 已初始化，天气任务的 DNS 解析依赖它 */
     esp_err_t netif_err = esp_netif_init();
     if (netif_err != ESP_OK && netif_err != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "init netif failed: %s", esp_err_to_name(netif_err));
@@ -575,8 +716,10 @@ esp_err_t homecare_weather_service_init(void)
         return ESP_ERR_NO_MEM;
     }
 
+    /* 设置初始占位快照，在首次数据到达前显示"获取中" */
     set_loading_snapshot(&s_snapshot);
 
+    /* 注册网络状态变化事件 */
     ESP_RETURN_ON_ERROR(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
                                                             network_event_handler, nullptr, nullptr),
                         TAG, "register ip event failed");
@@ -584,12 +727,19 @@ esp_err_t homecare_weather_service_init(void)
                                                             network_event_handler, nullptr, nullptr),
                         TAG, "register wifi event failed");
 
+    /* 创建天气后台任务 */
     if (xTaskCreate(weather_task, "homecare_weather", kTaskStackSize, nullptr,
                     kTaskPriority, &s_task) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
 
     s_initialized = true;
+    if (station_has_ip()) {
+        s_network_ready = true;
+        if (s_task != nullptr) {
+            xTaskNotifyGive(s_task);
+        }
+    }
     ESP_LOGI(TAG, "weather service initialized");
     return ESP_OK;
 #endif
@@ -606,6 +756,7 @@ esp_err_t homecare_weather_service_request_refresh(void)
     if (!s_network_ready) {
         return ESP_ERR_INVALID_STATE;
     }
+    /* 若数据已就绪且非过期状态，不重复触发 */
     if (!s_snapshot.has_live_data && !s_snapshot.stale) {
         return ESP_OK;
     }

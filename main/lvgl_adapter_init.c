@@ -63,15 +63,13 @@ lv_display_t *lvgl_adapter_init(const bsp_display_cfg_t *cfg)
     esp_lcd_touch_handle_t touch = NULL;
     err = bsp_touch_new(NULL, &touch);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Touch init failed (%d)", err);
-        return NULL;
-    }
-
-    const esp_lv_adapter_touch_config_t touch_cfg = ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(disp, touch);
-    lv_indev_t *indev = esp_lv_adapter_register_touch(&touch_cfg);
-    if (indev == NULL) {
-        ESP_LOGE(TAG, "Register touch failed");
-        return NULL;
+        ESP_LOGW(TAG, "Touch init failed (%d), continuing without touch input", err);
+    } else {
+        const esp_lv_adapter_touch_config_t touch_cfg = ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(disp, touch);
+        lv_indev_t *indev = esp_lv_adapter_register_touch(&touch_cfg);
+        if (indev == NULL) {
+            ESP_LOGW(TAG, "Register touch failed, continuing without touch input");
+        }
     }
 
     err = esp_lv_adapter_start();

@@ -239,6 +239,41 @@ static bool json_extract_i64(const char *payload, int payload_len, const char *k
     return true;
 }
 
+static int clamp_percent_value(long long value)
+{
+    if (value < 0) {
+        return 0;
+    }
+    if (value > 100) {
+        return 100;
+    }
+    return static_cast<int>(value);
+}
+
+static bool json_extract_percent_any(const char *payload, int payload_len,
+                                     const char *const *keys, size_t key_count, int *out)
+{
+    if (payload == nullptr || keys == nullptr || out == nullptr || payload_len <= 0) {
+        return false;
+    }
+
+    for (size_t i = 0; i < key_count; ++i) {
+        long long int_value = 0;
+        if (json_extract_i64(payload, payload_len, keys[i], &int_value)) {
+            *out = clamp_percent_value(int_value);
+            return true;
+        }
+
+        float float_value = 0.0f;
+        if (json_extract_float(payload, payload_len, keys[i], &float_value)) {
+            *out = clamp_percent_value(static_cast<long long>(float_value + (float_value >= 0.0f ? 0.5f : -0.5f)));
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static const char *smartcar_command_level(const char *field, const char *value)
 {
     if (field == nullptr || value == nullptr) {
@@ -335,6 +370,10 @@ static bool parse_smartcar_attitude_payload(const char *payload, int payload_len
     bool mag = false;
     long long ts_ms = 0;
     bool has_ts = false;
+    int battery_percent = 0;
+    int route_progress = 0;
+    const char *const battery_keys[] = {"battery_percent", "battery", "bat", "b"};
+    const char *const route_keys[] = {"route_progress", "route_percent", "route", "progress"};
 
     if (!json_extract_float(payload, payload_len, "r", &roll) ||
         !json_extract_float(payload, payload_len, "p", &pitch) ||
@@ -343,6 +382,12 @@ static bool parse_smartcar_attitude_payload(const char *payload, int payload_len
     }
     has_mag = json_extract_bool(payload, payload_len, "mag", &mag);
     has_ts = json_extract_i64(payload, payload_len, "ts", &ts_ms);
+    const bool has_battery = json_extract_percent_any(payload, payload_len, battery_keys,
+                                                      sizeof(battery_keys) / sizeof(battery_keys[0]),
+                                                      &battery_percent);
+    const bool has_route = json_extract_percent_any(payload, payload_len, route_keys,
+                                                    sizeof(route_keys) / sizeof(route_keys[0]),
+                                                    &route_progress);
 
     out->type = HOMECARE_MQTT_INBOUND_EVENT;
     out->has_smartcar_attitude = true;
@@ -352,6 +397,10 @@ static bool parse_smartcar_attitude_payload(const char *payload, int payload_len
     out->smartcar_attitude.yaw_deg = yaw;
     out->smartcar_attitude.has_mag = has_mag ? mag : false;
     out->smartcar_attitude.timestamp_ms = has_ts ? ts_ms : 0;
+    out->smartcar_attitude.has_battery_percent = has_battery;
+    out->smartcar_attitude.battery_percent = has_battery ? battery_percent : 0;
+    out->smartcar_attitude.has_route_progress = has_route;
+    out->smartcar_attitude.route_progress = has_route ? route_progress : 0;
 
     copy_text(out->event.level, sizeof(out->event.level), "L1", 2);
     if (has_ts) {
@@ -415,6 +464,36 @@ static bool parse_generic_event_payload(const char *payload, int payload_len,
     if (has_text) {
         copy_text(out->event.text, sizeof(out->event.text), text, strlen(text));
     }
+    return true;
+}
+
+static bool parse_smartcar_system_status_payload(const char *payload, int payload_len,
+                                                 HomeCareMqttInboundMessage *out)
+{
+    char state[HOMECARE_MQTT_FIELD_MAX_LEN] = {};
+    if (payload == nullptr || out == nullptr || payload_len < 0 ||
+        !json_extract_string(payload, payload_len, "state", state, sizeof(state))) {
+        return false;
+    }
+
+    out->type = HOMECARE_MQTT_INBOUND_COMMAND;
+    if (text_equals(state, strlen(state), "cruise") ||
+        text_equals(state, strlen(state), "return_running")) {
+        out->mode = HOMECARE_MQTT_MODE_NORMAL;
+        out->system_status = text_equals(state, strlen(state), "cruise")
+                                 ? HOMECARE_MQTT_SYSTEM_STATUS_CRUISE
+                                 : HOMECARE_MQTT_SYSTEM_STATUS_RETURN_RUNNING;
+    } else if (text_equals(state, strlen(state), "abnormal_running") ||
+               text_equals(state, strlen(state), "abnormal_ready")) {
+        out->mode = HOMECARE_MQTT_MODE_FALL;
+        out->system_status = text_equals(state, strlen(state), "abnormal_ready")
+                                 ? HOMECARE_MQTT_SYSTEM_STATUS_ABNORMAL_READY
+                                 : HOMECARE_MQTT_SYSTEM_STATUS_ABNORMAL_RUNNING;
+    } else {
+        return false;
+    }
+    out->has_mode = true;
+    out->has_system_status = true;
     return true;
 }
 
@@ -507,6 +586,10 @@ bool homecare_mqtt_parse_inbound(const char *topic, int topic_len,
         return out->has_mode;
     }
 
+    if (topic_has_suffix(topic, topic_len, "/system/status")) {
+        return parse_smartcar_system_status_payload(payload, payload_len, out);
+    }
+
     if (topic_has_suffix(topic, topic_len, "/attitude") || strcmp(out->topic, "smartcar/attitude") == 0) {
         return parse_smartcar_attitude_payload(payload, payload_len, out);
     }
@@ -525,6 +608,8 @@ static const char *action_to_text(homecare_mqtt_action_t action)
         return "patrol";
     case HOMECARE_MQTT_ACTION_RECHARGE:
         return "recharge";
+    case HOMECARE_MQTT_ACTION_STOP:
+        return "stop";
     case HOMECARE_MQTT_ACTION_PRIVACY_TOGGLE:
         return "privacy_toggle";
     case HOMECARE_MQTT_ACTION_CALL_FAMILY:
@@ -534,11 +619,51 @@ static const char *action_to_text(homecare_mqtt_action_t action)
     }
 }
 
+bool homecare_mqtt_format_action_with_request_id(homecare_mqtt_action_t action,
+                                                 const char *request_id,
+                                                 HomeCareMqttOutboundMessage *out)
+{
+    if (request_id == nullptr || request_id[0] == '\0' || out == nullptr) {
+        return false;
+    }
+
+    const char *state = nullptr;
+    const char *place = "";
+    bool drive_stop = false;
+    switch (action) {
+    case HOMECARE_MQTT_ACTION_PATROL: state = "cruise"; break;
+    case HOMECARE_MQTT_ACTION_RECHARGE: state = "return_home"; break;
+    case HOMECARE_MQTT_ACTION_STOP: drive_stop = true; break;
+    case HOMECARE_MQTT_ACTION_ABNORMAL_BATHROOM: state = "abnormal"; place = "bathroom"; break;
+    case HOMECARE_MQTT_ACTION_ABNORMAL_BEDROOM: state = "abnormal"; place = "bedroom"; break;
+    case HOMECARE_MQTT_ACTION_ABNORMAL_KITCHEN: state = "abnormal"; place = "kitchen"; break;
+    default: return false;
+    }
+
+    memset(out, 0, sizeof(*out));
+    copy_text(out->topic_suffix, sizeof(out->topic_suffix), "smartcar/cmd", strlen("smartcar/cmd"));
+    if (drive_stop) {
+        snprintf(out->payload, sizeof(out->payload),
+                 "{\"data\":{\"drive\":\"stop\"},\"requestId\":\"%s\"}", request_id);
+    } else {
+        snprintf(out->payload, sizeof(out->payload),
+                 "{\"cmd\":\"system\",\"state\":\"%s\",\"place\":\"%s\",\"requestId\":\"%s\"}",
+                 state, place, request_id);
+    }
+    out->qos = 1;
+    out->retain = 0;
+    return true;
+}
+
 bool homecare_mqtt_format_action(homecare_mqtt_action_t action,
                                  HomeCareMqttOutboundMessage *out)
 {
     if (out == nullptr) {
         return false;
+    }
+
+    if (action <= HOMECARE_MQTT_ACTION_ABNORMAL_KITCHEN) {
+        return homecare_mqtt_format_action_with_request_id(action, "terminal", out);
     }
 
     const char *action_text = action_to_text(action);

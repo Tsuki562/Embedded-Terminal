@@ -45,6 +45,19 @@ static void test_wifi_driver_is_started_lazily_for_manual_configuration()
     assert(source.find("(app->_screen_index == UI_WIFI_SCAN_INDEX) && (app->_nvs_param_map[NVS_KEY_WIFI_ENABLE] == true)") == std::string::npos);
 }
 
+static void test_wifi_init_preserves_pending_scan_request()
+{
+    const std::string source = read_file("components/apps/setting/Setting.cpp");
+    const std::string marker = "esp_err_t AppSettings::initWifi()";
+    const std::size_t start = source.find(marker);
+    assert(start != std::string::npos);
+    const std::size_t end = source.find("void AppSettings::initWeatherCityUi", start);
+    assert(end != std::string::npos);
+    const std::string init_wifi = source.substr(start, end - start);
+
+    assert(init_wifi.find("WIFI_EVENT_SCANING") == std::string::npos);
+}
+
 static void test_wifi_init_failure_is_logged_instead_of_aborting()
 {
     const std::string source = read_file("components/apps/setting/Setting.cpp");
@@ -60,6 +73,7 @@ int main()
     test_stop_wifi_scan_requests_driver_to_stop_scanning();
     test_wifi_screen_auto_scan_is_blocked_when_already_connected();
     test_wifi_driver_is_started_lazily_for_manual_configuration();
+    test_wifi_init_preserves_pending_scan_request();
     test_wifi_init_failure_is_logged_instead_of_aborting();
     return 0;
 }

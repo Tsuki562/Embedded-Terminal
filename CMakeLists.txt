@@ -5,6 +5,10 @@ cmake_minimum_required(VERSION 3.5)
 # The configuration is to prevent compilation errors on the Windows system.
 set(CMAKE_OBJECT_PATH_MAX 512)
 
+if(NOT DEFINED ENV{ESP_IDF_VERSION})
+    set(ENV{ESP_IDF_VERSION} "5.5")
+endif()
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 set(EXTRA_COMPONENT_DIRS "")

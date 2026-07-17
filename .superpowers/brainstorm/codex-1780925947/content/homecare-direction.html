@@ -1,0 +1,83 @@
+<h2>HomeCareHub v4 改造方向</h2>
+<p class="subtitle">目标是保留你现在的深色三页触控风格，但让页面更像这个项目本身：WiFi-CSI 家庭看护、异常复核、浴室久留、夜间守护、智能小车巡检和 MQTT 事件。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="height:230px;background:#050707;border:1px solid #263435;border-radius:8px;padding:12px;color:#f7fbfa;font-family:system-ui">
+        <div style="display:flex;justify-content:space-between;border-bottom:1px solid #263435;padding-bottom:8px">
+          <b>HomeCare Hub</b><span style="color:#9BE86F">全屋安全</span>
+        </div>
+        <div style="margin-top:14px;font-size:22px;color:#3FE0D0">客厅主控</div>
+        <div style="margin-top:8px;color:#9ba8a6;font-size:12px">灯光、温度、安防、CSI 状态并列展示</div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:28px">
+          <div style="height:46px;background:#121718;border-radius:6px"></div>
+          <div style="height:46px;background:#121718;border-radius:6px"></div>
+          <div style="height:46px;background:#121718;border-radius:6px"></div>
+          <div style="height:46px;background:#121718;border-radius:6px"></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. 保守换皮</h3>
+      <p>修复乱码，把普通智能家居内容替换成看护词汇，但布局基本不动。最快、风险最低，不过项目辨识度提升有限。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="height:230px;background:#050707;border:1px solid #263435;border-radius:8px;padding:12px;color:#f7fbfa;font-family:system-ui">
+        <div style="display:flex;justify-content:space-between;border-bottom:1px solid #263435;padding-bottom:8px">
+          <b>HomeCare 看护中控</b><span style="color:#3FE0D0">CSI 在线</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1.15fr .85fr;gap:10px;margin-top:14px">
+          <div>
+            <div style="font-size:24px;color:#9BE86F">日常看护</div>
+            <div style="margin-top:8px;color:#9ba8a6;font-size:12px;line-height:1.55">本地 AI 就绪 · 隐私保护开启<br>客厅低动态，浴室门区无超时</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:18px">
+              <div style="height:42px;background:#102021;border-left:4px solid #3FE0D0;border-radius:6px"></div>
+              <div style="height:42px;background:#171b12;border-left:4px solid #9BE86F;border-radius:6px"></div>
+              <div style="height:42px;background:#211b10;border-left:4px solid #FFC35A;border-radius:6px"></div>
+              <div style="height:42px;background:#141821;border-left:4px solid #78A8FF;border-radius:6px"></div>
+            </div>
+          </div>
+          <div style="background:#121718;border:1px solid #263435;border-radius:8px;padding:10px">
+            <div style="font-size:12px;color:#9ba8a6">智能小车</div>
+            <div style="font-size:20px;margin-top:6px;color:#3FE0D0">待命中</div>
+            <div style="height:8px;background:#263435;border-radius:999px;margin-top:20px"><div style="width:86%;height:8px;background:#9BE86F;border-radius:999px"></div></div>
+            <div style="height:8px;background:#263435;border-radius:999px;margin-top:16px"><div style="width:12%;height:8px;background:#3FE0D0;border-radius:999px"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. 看护态势中控（推荐）</h3>
+      <p>三页分别聚焦：看护总览、房间与事件、智能小车与联动控制。既保留 v4 的高级感，也最贴近 HomeCareHub.cpp 的真实功能。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="height:230px;background:#050707;border:1px solid #263435;border-radius:8px;padding:12px;color:#f7fbfa;font-family:system-ui">
+        <div style="display:flex;justify-content:space-between;border-bottom:1px solid #263435;padding-bottom:8px">
+          <b>异常复核</b><span style="color:#FF7F73">L3</span>
+        </div>
+        <div style="margin-top:14px;font-size:24px;color:#FF7F73">客厅高动态</div>
+        <div style="margin-top:8px;color:#9ba8a6;font-size:12px;line-height:1.55">小车出发 · 语音询问 · 家属可呼叫</div>
+        <div style="display:flex;gap:8px;margin-top:22px">
+          <div style="flex:1;height:82px;background:#241413;border:1px solid #5d2a26;border-radius:8px"></div>
+          <div style="flex:1;height:82px;background:#121718;border:1px solid #263435;border-radius:8px"></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. 风险响应指挥台</h3>
+      <p>把异常复核放到最中心，视觉更紧张，适合演示“跌倒/久留/离床”的响应链路。缺点是日常状态会显得不够温和。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>我的建议</h3>
+  <p>选 B：它能把项目最特别的 CSI 看护和小车巡检做成第一眼可读的核心，同时保留天气、房间、事件和设备控制这些现有模块。最终我会直接改 <code>design_preview_v4.html</code>，不碰 C++ 文件。</p>
+</div>

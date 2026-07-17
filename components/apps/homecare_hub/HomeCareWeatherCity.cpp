@@ -1,3 +1,10 @@
+/**
+ * @file HomeCareWeatherCity.cpp
+ * @brief 天气服务城市选择模块实现
+ *
+ * 管理内置城市列表（中国主要城市及其经纬度），通过 NVS 持久化存储用户选中的城市索引，
+ * 使用 FreeRTOS 互斥锁保证多线程安全。
+ */
 #include "HomeCareWeatherCity.hpp"
 
 #include <cstdint>
@@ -10,10 +17,18 @@
 namespace {
 
 static const char *TAG = "homecare_weather_city";
-static constexpr char kNvsNamespace[] = "storage";
-static constexpr char kNvsKeyCityIndex[] = "weather_city";
-static constexpr size_t kDefaultCityIndex = 0;
 
+/* NVS 存储相关常量 */
+static constexpr char kNvsNamespace[] = "storage";          /**< NVS 命名空间 */
+static constexpr char kNvsKeyCityIndex[] = "weather_city";   /**< 存储选中城市索引的 NVS 键名 */
+static constexpr size_t kDefaultCityIndex = 0;               /**< 默认选中城市索引（杭州） */
+
+/**
+ * @brief 内置城市列表
+ *
+ * 包含中国主要省会城市及直辖市的名称与经纬度坐标，用于 Open-Meteo API 查询。
+ * 索引 0 为默认城市（杭州）。
+ */
 static const HomeCareWeatherCity s_cities[] = {
     {"杭州", "30.2741", "120.1551"},
     {"北京", "39.9042", "116.4074"},
@@ -64,15 +79,22 @@ static const HomeCareWeatherCity s_cities[] = {
     {"南通", "31.9802", "120.8943"},
 };
 
-static SemaphoreHandle_t s_lock = nullptr;
-static size_t s_selected_index = kDefaultCityIndex;
-static bool s_initialized = false;
+/* 模块内部状态 */
+static SemaphoreHandle_t s_lock = nullptr;   /**< 互斥锁，保护 s_selected_index 的并发访问 */
+static size_t s_selected_index = kDefaultCityIndex;  /**< 当前选中的城市索引 */
+static bool s_initialized = false;           /**< 模块是否已初始化 */
 
+/** @brief 计算内置城市列表的元素数量 */
 static constexpr size_t city_count(void)
 {
     return sizeof(s_cities) / sizeof(s_cities[0]);
 }
 
+/**
+ * @brief 校验并修正城市索引
+ *
+ * 若索引越界则回退到默认城市索引，防止 NVS 中存储了损坏的数据。
+ */
 static size_t sanitize_city_index(int32_t index)
 {
     if (index < 0 || static_cast<size_t>(index) >= city_count()) {
@@ -81,6 +103,10 @@ static size_t sanitize_city_index(int32_t index)
     return static_cast<size_t>(index);
 }
 
+/**
+ * @brief 将选中的城市索引写入 NVS（调用者需持有 s_lock）
+ * @param index 要持久化的城市索引
+ */
 static esp_err_t persist_selected_index_locked(size_t index)
 {
     nvs_handle_t nvs_handle = 0;
@@ -98,6 +124,11 @@ static esp_err_t persist_selected_index_locked(size_t index)
     return err;
 }
 
+/**
+ * @brief 从 NVS 加载之前选中的城市索引（调用者需持有 s_lock）
+ *
+ * 若 NVS 中无记录（首次启动），写入默认值；若索引越界则修正并回写。
+ */
 static esp_err_t load_selected_index_locked(void)
 {
     nvs_handle_t nvs_handle = 0;
@@ -109,6 +140,7 @@ static esp_err_t load_selected_index_locked(void)
     int32_t stored_index = static_cast<int32_t>(kDefaultCityIndex);
     err = nvs_get_i32(nvs_handle, kNvsKeyCityIndex, &stored_index);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
+        /* 首次启动，NVS 中尚无记录，写入默认值 */
         s_selected_index = kDefaultCityIndex;
         err = nvs_set_i32(nvs_handle, kNvsKeyCityIndex, static_cast<int32_t>(s_selected_index));
         if (err == ESP_OK) {
@@ -116,6 +148,7 @@ static esp_err_t load_selected_index_locked(void)
         }
     } else if (err == ESP_OK) {
         s_selected_index = sanitize_city_index(stored_index);
+        /* 若 NVS 中的索引越界，修正后回写 */
         if (s_selected_index != static_cast<size_t>(stored_index)) {
             err = nvs_set_i32(nvs_handle, kNvsKeyCityIndex, static_cast<int32_t>(s_selected_index));
             if (err == ESP_OK) {
@@ -128,6 +161,11 @@ static esp_err_t load_selected_index_locked(void)
     return err;
 }
 
+/**
+ * @brief 延迟初始化：首次调用时创建互斥锁并从 NVS 加载城市索引
+ *
+ * 使用 double-checked locking 模式避免重复初始化。
+ */
 static esp_err_t ensure_initialized(void)
 {
     if (s_initialized) {

@@ -22,8 +22,10 @@
 #include "ui/ui.h"
 #include "Setting.hpp"
 #include "app_sntp.h"
+#include "camera_viewer/CameraMqttReceiver.hpp"
 #include "homecare_hub/HomeCareWeather.hpp"
 #include "homecare_hub/HomeCareWeatherCity.hpp"
+#include "mqtt_bridge/HomeCareMqttBridge.hpp"
 
 #include "esp_brookesia_versions.h"
 #include "esp_lv_adapter.h"
@@ -82,12 +84,31 @@ static volatile bool s_wifi_scan_task_stop = false;
 static EventGroupHandle_t s_wifi_event_group;
 static esp_netif_t *s_wifi_sta_netif = nullptr;
 static esp_event_handler_instance_t s_wifi_event_instance_any_id = nullptr;
+static esp_event_handler_instance_t s_ip_event_instance_got_ip = nullptr;
 static bool s_wifi_initialized = false;
 
 static char st_wifi_ssid[32];
 static char st_wifi_password[64];
 
 static uint8_t base_mac_addr[6] = {0};
+
+static void startHomeCareNetworkServices(void)
+{
+    esp_err_t err = homecare_mqtt_bridge_init();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "HomeCare MQTT init failed after Wi-Fi got IP: %s", esp_err_to_name(err));
+    }
+
+    err = homecare_weather_service_init();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "HomeCare weather init failed after Wi-Fi got IP: %s", esp_err_to_name(err));
+    }
+
+    err = camera_mqtt_receiver_init();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Camera MQTT receiver init failed after Wi-Fi got IP: %s", esp_err_to_name(err));
+    }
+}
 static char mac_str[18] = {0};
 
 static lv_obj_t* panel_wifi_btn[SCAN_LIST_SIZE];
@@ -542,7 +563,7 @@ esp_err_t AppSettings::initWifi()
             return ESP_ERR_NO_MEM;
         }
     }
-    xEventGroupClearBits(s_wifi_event_group, WIFI_EVENT_CONNECTED | WIFI_EVENT_INIT_DONE | WIFI_EVENT_SCANING);
+    xEventGroupClearBits(s_wifi_event_group, WIFI_EVENT_CONNECTED | WIFI_EVENT_INIT_DONE);
 
     esp_err_t ret = esp_netif_init();
     if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
@@ -578,6 +599,17 @@ esp_err_t AppSettings::initWifi()
                                                   &s_wifi_event_instance_any_id);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "Register Wi-Fi event handler failed: %s", esp_err_to_name(ret));
+            return ret;
+        }
+    }
+    if (s_ip_event_instance_got_ip == nullptr) {
+        ret = esp_event_handler_instance_register(IP_EVENT,
+                                                  IP_EVENT_STA_GOT_IP,
+                                                  &wifiEventHandler,
+                                                  this,
+                                                  &s_ip_event_instance_got_ip);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Register IP event handler failed: %s", esp_err_to_name(ret));
             return ret;
         }
     }
@@ -1038,6 +1070,7 @@ void AppSettings::wifiConnectTask(void *arg)
 
     if (connect_ready && (bits & WIFI_EVENT_CONNECTED)) {
         ESP_LOGI(TAG, "Connected successfully");
+        startHomeCareNetworkServices();
 
         if (!app->_is_ui_del) {
             esp_lv_adapter_lock(-1);
@@ -1093,9 +1126,10 @@ void AppSettings::wifiEventHandler(void* arg, esp_event_base_t event_base, int32
     AppSettings *app = (AppSettings *)arg;
 
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
-        xEventGroupSetBits(s_wifi_event_group, WIFI_EVENT_CONNECTED);
         ESP_LOGI(TAG, "connected to ap SSID:%s, password_len=%u.",
                  st_wifi_ssid, static_cast<unsigned>(strlen(st_wifi_password)));
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        xEventGroupSetBits(s_wifi_event_group, WIFI_EVENT_CONNECTED);
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         xEventGroupClearBits(s_wifi_event_group, WIFI_EVENT_CONNECTED);
         ESP_LOGI(TAG, "disconnected from ap SSID:%s.", st_wifi_ssid);

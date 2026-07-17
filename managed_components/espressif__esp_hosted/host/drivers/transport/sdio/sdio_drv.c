@@ -88,7 +88,6 @@
 #include "esp_hosted_bt.h"
 #include "port_esp_hosted_host_config.h"
 #include "esp_hosted_event.h"
-#include "esp_err.h"
 #include "esp_heap_caps.h"
 
 static const char TAG[] = "H_SDIO_DRV";
@@ -110,9 +109,7 @@ static const char TAG[] = "H_SDIO_DRV";
 #define PROCESS_RX_TASK_STACK_SIZE        CONFIG_ESP_HOSTED_DFLT_TASK_STACK
 #define RX_BUF_TASK_STACK_SIZE            CONFIG_ESP_HOSTED_DFLT_TASK_STACK
 #define RX_TIMEOUT_TICKS                  50
-
-#define SDIO_RX_PREALLOC_BUFFER_SIZE      MAX_SDIO_BUFFER_SIZE
-#define SDIO_RX_MEMPOOL_PREWARM_BLOCKS    4
+#define SDIO_STREAMING_RX_BUFFER_SIZE     (ESP_TX_BUFFER_MAX * 2)
 
 #define BUFFER_AVAILABLE                  1
 #define BUFFER_UNAVAILABLE                0
@@ -212,48 +209,26 @@ static void sdio_write_task(void const* pvParameters);
 static void sdio_read_task(void const* pvParameters);
 static void sdio_process_rx_task(void const* pvParameters);
 
-static void log_internal_dma_heap(const char *label)
-{
-	ESP_LOGI(TAG, "%s: dma_free=%u dma_largest=%u internal_free=%u internal_largest=%u",
-			label,
-			(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT),
-			(unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT),
-			(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-			(unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-}
-
-static esp_err_t sdio_rx_prealloc_stream_buffers(void)
-{
 #if H_SDIO_HOST_RX_MODE == H_SDIO_HOST_STREAMING_MODE
-	for (int i = 0; i < 2; i++) {
-		if (double_buf.buffer[i].buf_size >= SDIO_RX_PREALLOC_BUFFER_SIZE &&
-				double_buf.buffer[i].buf) {
-			continue;
+static esp_err_t sdio_prealloc_streaming_rx_buffers(void)
+{
+	for (int index = 0; index < 2; index++) {
+		if (double_buf.buffer[index].buf == NULL) {
+			double_buf.buffer[index].buf =
+				(uint8_t *)g_h.funcs->_h_malloc_align(SDIO_STREAMING_RX_BUFFER_SIZE, HOSTED_MEM_ALIGNMENT_64);
+			if (double_buf.buffer[index].buf == NULL) {
+				ESP_LOGE(TAG, "Failed to preallocate streaming RX buffer[%d], size=%d",
+						index, SDIO_STREAMING_RX_BUFFER_SIZE);
+				return ESP_ERR_NO_MEM;
+			}
+			double_buf.buffer[index].buf_size = SDIO_STREAMING_RX_BUFFER_SIZE;
+			ESP_LOGI(TAG, "preallocated streaming RX buffer[%d], size=%ld",
+					index, double_buf.buffer[index].buf_size);
 		}
-
-		if (double_buf.buffer[i].buf) {
-			g_h.funcs->_h_free_align(double_buf.buffer[i].buf);
-			double_buf.buffer[i].buf = NULL;
-			double_buf.buffer[i].buf_size = 0;
-		}
-
-		double_buf.buffer[i].buf =
-			(uint8_t *)g_h.funcs->_h_malloc_align(SDIO_RX_PREALLOC_BUFFER_SIZE,
-					HOSTED_MEM_ALIGNMENT_64);
-		if (!double_buf.buffer[i].buf) {
-			ESP_LOGE(TAG, "prealloc stream rx buffer[%d] %u bytes failed", i,
-					(unsigned)SDIO_RX_PREALLOC_BUFFER_SIZE);
-			log_internal_dma_heap("sdio rx prealloc failed");
-			return ESP_ERR_NO_MEM;
-		}
-		double_buf.buffer[i].buf_size = SDIO_RX_PREALLOC_BUFFER_SIZE;
 	}
-	ESP_LOGI(TAG, "Preallocated SDIO streaming RX buffers: 2 x %u bytes",
-			(unsigned)SDIO_RX_PREALLOC_BUFFER_SIZE);
-	log_internal_dma_heap("after sdio rx prealloc");
-#endif
 	return ESP_OK;
 }
+#endif
 
 static inline void sdio_mempool_create(void)
 {
@@ -278,36 +253,6 @@ static inline void *sdio_buffer_alloc(uint need_memset)
 static inline void sdio_buffer_free(void *buf)
 {
 	mempool_free(buf_mp_g, buf);
-}
-
-static void sdio_mempool_prewarm(void)
-{
-#ifdef H_USE_MEMPOOL
-	void *blocks[SDIO_RX_MEMPOOL_PREWARM_BLOCKS] = { 0 };
-	int allocated = 0;
-
-	if (!buf_mp_g) {
-		return;
-	}
-
-	for (int i = 0; i < SDIO_RX_MEMPOOL_PREWARM_BLOCKS; i++) {
-		blocks[i] = sdio_buffer_alloc(MEMSET_NOT_REQUIRED);
-		if (!blocks[i]) {
-			ESP_LOGW(TAG, "prewarm mempool block[%d] failed", i);
-			log_internal_dma_heap("sdio mempool prewarm failed");
-			break;
-		}
-		allocated++;
-	}
-
-	for (int i = 0; i < allocated; i++) {
-		sdio_buffer_free(blocks[i]);
-	}
-
-	ESP_LOGI(TAG, "Prewarmed SDIO RX mempool: %d x %u bytes",
-			allocated, (unsigned)MAX_SDIO_BUFFER_SIZE);
-	log_internal_dma_heap("after sdio mempool prewarm");
-#endif
 }
 
 void bus_deinit_internal(void *bus_handle)
@@ -865,7 +810,38 @@ static int is_valid_sdio_rx_packet(uint8_t *rxbuff_a, uint16_t *len_a, uint16_t 
 }
 
 // pushes received packet data on to rx queue
-static esp_err_t sdio_push_pkt_to_queue(uint8_t * rxbuff, uint16_t len, uint16_t offset)
+static void sdio_rx_packet_free(void *buf)
+{
+	if (buf) {
+		heap_caps_free(buf);
+	}
+}
+
+static uint8_t *sdio_rx_packet_alloc(uint16_t if_type, uint32_t packet_size)
+{
+	uint8_t *pkt_rxbuff = NULL;
+
+	if (if_type == ESP_STA_IF || if_type == ESP_AP_IF) {
+		pkt_rxbuff = (uint8_t *)heap_caps_malloc(packet_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+		if (pkt_rxbuff == NULL) {
+			pkt_rxbuff = (uint8_t *)heap_caps_malloc(packet_size, MALLOC_CAP_8BIT);
+		}
+		return pkt_rxbuff;
+	}
+
+	return (uint8_t *)sdio_buffer_alloc(MEMSET_REQUIRED);
+}
+
+static void (*sdio_rx_packet_free_func(uint16_t if_type))(void *)
+{
+	if (if_type == ESP_STA_IF || if_type == ESP_AP_IF) {
+		return sdio_rx_packet_free;
+	}
+	return sdio_buffer_free;
+}
+
+static esp_err_t sdio_push_pkt_to_queue(uint8_t * rxbuff, uint16_t len, uint16_t offset,
+		void (*free_func)(void *))
 {
 	uint8_t pkt_prio = PRIO_Q_OTHERS;
 	struct esp_payload_header *h= NULL;
@@ -876,7 +852,7 @@ static esp_err_t sdio_push_pkt_to_queue(uint8_t * rxbuff, uint16_t len, uint16_t
 	memset(&buf_handle, 0, sizeof(interface_buffer_handle_t));
 
 	buf_handle.priv_buffer_handle = rxbuff;
-	buf_handle.free_buf_handle    = sdio_buffer_free;
+	buf_handle.free_buf_handle    = free_func;
 	buf_handle.payload_len        = len;
 	buf_handle.if_type            = h->if_type;
 	buf_handle.if_num             = h->if_num;
@@ -944,7 +920,7 @@ static esp_err_t sdio_push_data_to_queue(uint8_t * buf, uint32_t buf_len)
 		return ESP_FAIL;
 	}
 
-	if (sdio_push_pkt_to_queue(buf, len, offset)) {
+	if (sdio_push_pkt_to_queue(buf, len, offset, sdio_buffer_free)) {
 		ESP_LOGE(TAG, "Failed to push Rx packet to queue");
 		return ESP_FAIL;
 	}
@@ -966,17 +942,17 @@ static uint8_t * sdio_rx_get_buffer(uint32_t len)
 	uint8_t ** buf = &double_buf.buffer[index].buf;
 
 	if (len > double_buf.buffer[index].buf_size) {
+		uint8_t *new_buf = (uint8_t *)g_h.funcs->_h_malloc_align(len, HOSTED_MEM_ALIGNMENT_64);
+		if (new_buf == NULL) {
+			ESP_LOGE(TAG, "Failed to allocate streaming RX buffer, requested=%ld current=%ld",
+					len, double_buf.buffer[index].buf_size);
+			return NULL;
+		}
 		if (*buf) {
 			// free already allocated memory
 			g_h.funcs->_h_free_align(*buf);
 		}
-		*buf = (uint8_t *)g_h.funcs->_h_malloc_align(len, HOSTED_MEM_ALIGNMENT_64);
-		if (!*buf) {
-			double_buf.buffer[index].buf_size = 0;
-			ESP_LOGE(TAG, "stream rx buffer[%d] alloc failed: len=%lu", index, len);
-			log_internal_dma_heap("sdio rx alloc failed");
-			return NULL;
-		}
+		*buf = new_buf;
 		double_buf.buffer[index].buf_size = len;
 		ESP_LOGD(TAG, "buf %d size: %ld", index, double_buf.buffer[index].buf_size);
 	}
@@ -1006,23 +982,28 @@ static esp_err_t sdio_push_data_to_queue(uint8_t * buf, uint32_t buf_len)
 			/* TODO: Free by caller? */
 			return ESP_FAIL;
 		}
-		/* Allocate rx buffer */
-		pkt_rxbuff = sdio_buffer_alloc(MEMSET_REQUIRED);
-		if (!pkt_rxbuff) {
-			ESP_LOGE(TAG, "packet rx buffer alloc failed: len=%u offset=%u", len, offset);
-			log_internal_dma_heap("sdio packet alloc failed");
-			return ESP_ERR_NO_MEM;
-		}
-
 		packet_size = len + offset;
 		if (packet_size > buf_len) {
 			ESP_LOGE(TAG, "packet size[%lu]>[%lu] too big for remaining stream data",
 					packet_size, buf_len);
 			return ESP_FAIL;
 		}
+
+		struct esp_payload_header *h = (struct esp_payload_header *)buf;
+		pkt_rxbuff = sdio_rx_packet_alloc(h->if_type, packet_size);
+		if (!pkt_rxbuff) {
+			ESP_LOGE(TAG, "packet rx buffer alloc failed: len=%u offset=%u if=%u packet=%lu "
+					"dma_free=%lu dma_largest=%lu psram_free=%lu",
+					len, offset, h->if_type, packet_size,
+					heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT),
+					heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT),
+					heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+			return ESP_ERR_NO_MEM;
+		}
 		memcpy(pkt_rxbuff, buf, packet_size);
 
-		if (sdio_push_pkt_to_queue(pkt_rxbuff, len, offset)) {
+		if (sdio_push_pkt_to_queue(pkt_rxbuff, len, offset,
+					sdio_rx_packet_free_func(h->if_type))) {
 			ESP_LOGI(TAG, "Failed to push a packet to queue from stream");
 		}
 
@@ -1247,8 +1228,8 @@ static void sdio_read_task(void const* pvParameters)
 		/* Allocate rx buffer */
 		rxbuff = sdio_rx_get_buffer(len_from_slave);
 		if (!rxbuff) {
+			ESP_LOGE(TAG, "No SDIO RX buffer available for %ld bytes", len_from_slave);
 			SDIO_DRV_UNLOCK();
-			ESP_LOGE(TAG, "No SDIO RX buffer for len=%lu, dropping interrupt frame", len_from_slave);
 			g_h.funcs->_h_msleep(10);
 			continue;
 		}
@@ -1476,7 +1457,6 @@ void *bus_init_internal(void)
 	}
 
 	sdio_mempool_create();
-	sdio_mempool_prewarm();
 
 	/* initialise SDMMC before starting read/write threads
 	 * which depend on SDMMC*/
@@ -1490,10 +1470,13 @@ void *bus_init_internal(void)
 	memset(&double_buf, 0, sizeof(double_buf_t));
 	double_buf.read_index = -1; // indicates we are not reading anything
 	double_buf.write_index = 0; // we will write into the first buffer
-	if (sdio_rx_prealloc_stream_buffers() != ESP_OK) {
-		ESP_LOGE(TAG, "failed to reserve SDIO streaming RX buffers");
+
+#if H_SDIO_HOST_RX_MODE == H_SDIO_HOST_STREAMING_MODE
+	if (sdio_prealloc_streaming_rx_buffers() != ESP_OK) {
+		bus_deinit_internal(sdio_handle);
 		return NULL;
 	}
+#endif
 
 	sem_double_buf_xfer_data = g_h.funcs->_h_create_semaphore(1);
 	assert(sem_double_buf_xfer_data);

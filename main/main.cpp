@@ -91,6 +91,10 @@ extern "C" void app_main(void)
     assert(homecare_hub != nullptr && "Failed to create homecare_hub");
     assert((phone->installApp(homecare_hub) >= 0) && "Failed to install homecare_hub");
 
+    CameraViewer *camera_viewer = new CameraViewer();
+    assert(camera_viewer != nullptr && "Failed to create camera_viewer");
+    assert((phone->installApp(camera_viewer) >= 0) && "Failed to install camera_viewer");
+
     AppSettings *app_settings = new AppSettings();
     assert(app_settings != nullptr && "Failed to create app_settings");
     assert((phone->installApp(app_settings) >= 0) && "Failed to begin app_settings");

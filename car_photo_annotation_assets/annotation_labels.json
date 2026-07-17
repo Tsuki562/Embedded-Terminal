@@ -1,0 +1,164 @@
+{
+  "source": "original.jpg",
+  "final": "annotated_final.png",
+  "overlay": "annotation_overlay.png",
+  "image_size": [
+    1706,
+    1279
+  ],
+  "labels": [
+    {
+      "id": "camera",
+      "text": "摄像头安装位置",
+      "box": [
+        365,
+        115
+      ],
+      "targets": [
+        [
+          565,
+          210
+        ]
+      ],
+      "font": "large",
+      "rendered_box": [
+        365,
+        115,
+        639,
+        171
+      ],
+      "overlay_box": [
+        365,
+        115,
+        639,
+        171
+      ]
+    },
+    {
+      "id": "board",
+      "text": "主控板",
+      "box": [
+        1220,
+        410
+      ],
+      "targets": [
+        [
+          1060,
+          600
+        ]
+      ],
+      "font": "small",
+      "rendered_box": [
+        1220,
+        410,
+        1346,
+        462
+      ],
+      "overlay_box": [
+        1220,
+        410,
+        1346,
+        462
+      ]
+    },
+    {
+      "id": "battery",
+      "text": "电池位置",
+      "box": [
+        1235,
+        765
+      ],
+      "targets": [
+        [
+          1345,
+          805
+        ]
+      ],
+      "font": "small",
+      "rendered_box": [
+        1235,
+        765,
+        1391,
+        816
+      ],
+      "overlay_box": [
+        1235,
+        765,
+        1391,
+        816
+      ]
+    },
+    {
+      "id": "motor",
+      "text": "电机",
+      "box": [
+        720,
+        825
+      ],
+      "targets": [
+        [
+          810,
+          905
+        ],
+        [
+          1130,
+          915
+        ]
+      ],
+      "font": "small",
+      "rendered_box": [
+        720,
+        825,
+        816,
+        876
+      ],
+      "overlay_box": [
+        720,
+        825,
+        816,
+        876
+      ]
+    },
+    {
+      "id": "wheel",
+      "text": "车轮",
+      "box": [
+        1180,
+        1080
+      ],
+      "targets": [
+        [
+          1240,
+          1015
+        ]
+      ],
+      "font": "small",
+      "rendered_box": [
+        1180,
+        1080,
+        1276,
+        1132
+      ],
+      "overlay_box": [
+        1180,
+        1080,
+        1276,
+        1132
+      ]
+    }
+  ],
+  "wheel_outlines": [
+    [
+      505,
+      890,
+      842,
+      1205
+    ],
+    [
+      1080,
+      865,
+      1405,
+      1175
+    ]
+  ]
+}

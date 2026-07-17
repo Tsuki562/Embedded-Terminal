@@ -11,8 +11,10 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "mqtt_client.h"
+#include "camera_viewer/CameraMqttReceiver.hpp"
 
 #ifndef CONFIG_HOMECARE_MQTT_BROKER_URI
 #define CONFIG_HOMECARE_MQTT_BROKER_URI ""
@@ -38,6 +40,10 @@
 #define CONFIG_HOMECARE_MQTT_INBOUND_SMARTCAR_DATA_TOPIC "smartcar/attitude"
 #endif
 
+#ifndef CONFIG_HOMECARE_MQTT_INBOUND_SYSTEM_STATUS_TOPIC
+#define CONFIG_HOMECARE_MQTT_INBOUND_SYSTEM_STATUS_TOPIC "smartcar/system/status"
+#endif
+
 #ifndef CONFIG_HOMECARE_MQTT_INBOUND_AUX_TOPIC
 #define CONFIG_HOMECARE_MQTT_INBOUND_AUX_TOPIC ""
 #endif
@@ -48,6 +54,22 @@
 
 #ifndef CONFIG_HOMECARE_MQTT_QUEUE_SIZE
 #define CONFIG_HOMECARE_MQTT_QUEUE_SIZE 8
+#endif
+
+#ifndef CONFIG_CAMERA_MQTT_ENABLE
+#define CONFIG_CAMERA_MQTT_ENABLE 0
+#endif
+
+#ifndef CONFIG_CAMERA_MQTT_BROKER_URI
+#define CONFIG_CAMERA_MQTT_BROKER_URI ""
+#endif
+
+#ifndef CONFIG_CAMERA_MQTT_JPEG_TOPIC
+#define CONFIG_CAMERA_MQTT_JPEG_TOPIC "cam/jpeg"
+#endif
+
+#ifndef CONFIG_CAMERA_MQTT_STATUS_TOPIC
+#define CONFIG_CAMERA_MQTT_STATUS_TOPIC ""
 #endif
 
 static const char *TAG = "homecare_mqtt";
@@ -94,6 +116,40 @@ static bool broker_uri_is_valid(const char *uri)
     return true;
 }
 
+static bool camera_uses_shared_client(void)
+{
+    return CONFIG_CAMERA_MQTT_ENABLE &&
+           broker_uri_is_valid(CONFIG_HOMECARE_MQTT_BROKER_URI) &&
+           broker_uri_is_valid(CONFIG_CAMERA_MQTT_BROKER_URI) &&
+           strcmp(CONFIG_HOMECARE_MQTT_BROKER_URI, CONFIG_CAMERA_MQTT_BROKER_URI) == 0;
+}
+
+static void build_camera_status_topic(char *out, size_t out_size)
+{
+    if (out == nullptr || out_size == 0) {
+        return;
+    }
+    if (CONFIG_CAMERA_MQTT_STATUS_TOPIC[0] != '\0') {
+        snprintf(out, out_size, "%s", CONFIG_CAMERA_MQTT_STATUS_TOPIC);
+    } else {
+        snprintf(out, out_size, "%s/status", CONFIG_CAMERA_MQTT_JPEG_TOPIC);
+    }
+}
+
+static bool station_has_ip(void)
+{
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (netif == nullptr) {
+        return false;
+    }
+
+    esp_netif_ip_info_t ip_info = {};
+    if (esp_netif_get_ip_info(netif, &ip_info) != ESP_OK) {
+        return false;
+    }
+    return ip_info.ip.addr != 0;
+}
+
 static esp_err_t publish_outbound(const HomeCareMqttOutboundMessage *msg)
 {
     if (msg == nullptr || s_client == nullptr || !s_connected) {
@@ -123,6 +179,16 @@ static void start_client_if_ready(void)
     }
 }
 
+static esp_err_t publish_absolute(const HomeCareMqttOutboundMessage *msg)
+{
+    if (msg == nullptr || s_client == nullptr || !s_connected) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    const int id = esp_mqtt_client_publish(s_client, msg->topic_suffix, msg->payload,
+                                           0, msg->qos, msg->retain);
+    return id >= 0 ? ESP_OK : ESP_FAIL;
+}
+
 static void stop_client_if_started(void)
 {
     if (s_client == nullptr || !s_started) {
@@ -139,13 +205,13 @@ static void stop_client_if_started(void)
     }
 }
 
-static void subscribe_topic_if_set(esp_mqtt_client_handle_t client, const char *topic_filter)
+static void subscribe_topic_if_set(esp_mqtt_client_handle_t client, const char *topic_filter, int qos = 1)
 {
     if (client == nullptr || topic_filter == nullptr || topic_filter[0] == '\0') {
         return;
     }
 
-    const int mid = esp_mqtt_client_subscribe(client, topic_filter, 1);
+    const int mid = esp_mqtt_client_subscribe(client, topic_filter, qos);
     if (mid < 0) {
         ESP_LOGW(TAG, "subscribe %s failed", topic_filter);
     } else {
@@ -174,7 +240,15 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         subscribe_topic_if_set(event->client, topic);
         subscribe_topic_if_set(event->client, CONFIG_HOMECARE_MQTT_INBOUND_CMD_TOPIC);
         subscribe_topic_if_set(event->client, CONFIG_HOMECARE_MQTT_INBOUND_SMARTCAR_DATA_TOPIC);
+        subscribe_topic_if_set(event->client, CONFIG_HOMECARE_MQTT_INBOUND_SYSTEM_STATUS_TOPIC);
         subscribe_topic_if_set(event->client, CONFIG_HOMECARE_MQTT_INBOUND_AUX_TOPIC);
+        if (camera_uses_shared_client()) {
+            char camera_status_topic[96] = {};
+            build_camera_status_topic(camera_status_topic, sizeof(camera_status_topic));
+            subscribe_topic_if_set(event->client, CONFIG_CAMERA_MQTT_JPEG_TOPIC, 0);
+            subscribe_topic_if_set(event->client, camera_status_topic);
+            camera_mqtt_receiver_set_mqtt_connected(true);
+        }
         build_topic(topic, sizeof(topic), "out/status");
         esp_mqtt_client_publish(event->client, topic, "{\"status\":\"online\"}", 0, 1, 1);
         ESP_LOGI(TAG, "MQTT connected and subscribed");
@@ -182,9 +256,17 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
     }
     case MQTT_EVENT_DISCONNECTED:
         s_connected = false;
+        camera_mqtt_receiver_set_mqtt_connected(false);
         ESP_LOGI(TAG, "MQTT disconnected");
         break;
     case MQTT_EVENT_DATA: {
+        if (camera_mqtt_receiver_accepts_topic(event->topic, event->topic_len)) {
+            camera_mqtt_receiver_handle_mqtt_data(event->topic, event->topic_len,
+                                                  event->data, event->data_len,
+                                                  event->total_data_len,
+                                                  event->current_data_offset);
+            break;
+        }
         HomeCareMqttInboundMessage message = {};
         if (homecare_mqtt_parse_inbound(event->topic, event->topic_len,
                                         event->data, event->data_len, &message)) {
@@ -279,6 +361,9 @@ esp_err_t homecare_mqtt_bridge_init(void)
 
     s_initialized = true;
     ESP_LOGI(TAG, "MQTT bridge initialized, broker configured");
+    if (station_has_ip()) {
+        start_client_if_ready();
+    }
     return ESP_OK;
 }
 
@@ -298,6 +383,16 @@ bool homecare_mqtt_bridge_receive(HomeCareMqttInboundMessage *out)
 esp_err_t homecare_mqtt_bridge_publish_action(homecare_mqtt_action_t action)
 {
     HomeCareMqttOutboundMessage msg = {};
+    if (action <= HOMECARE_MQTT_ACTION_ABNORMAL_KITCHEN) {
+        char request_id[HOMECARE_MQTT_FIELD_MAX_LEN] = {};
+        const char *prefix = action == HOMECARE_MQTT_ACTION_STOP ? "drv" : "sys";
+        snprintf(request_id, sizeof(request_id), "%s_%lld", prefix,
+                 static_cast<long long>(esp_timer_get_time() / 1000));
+        if (!homecare_mqtt_format_action_with_request_id(action, request_id, &msg)) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        return publish_absolute(&msg);
+    }
     if (!homecare_mqtt_format_action(action, &msg)) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -311,6 +406,17 @@ esp_err_t homecare_mqtt_bridge_publish_mode(homecare_mqtt_mode_t mode)
         return ESP_ERR_INVALID_ARG;
     }
     return publish_outbound(&msg);
+}
+
+esp_err_t homecare_mqtt_bridge_publish_raw(const char *topic, const char *payload,
+                                           int qos, int retain)
+{
+    if (topic == nullptr || payload == nullptr || s_client == nullptr || !s_connected) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    const int id = esp_mqtt_client_publish(s_client, topic, payload, 0, qos, retain);
+    return id >= 0 ? ESP_OK : ESP_FAIL;
 }
 
 esp_err_t homecare_mqtt_bridge_publish_event(const HomeCareMqttEvent *event,

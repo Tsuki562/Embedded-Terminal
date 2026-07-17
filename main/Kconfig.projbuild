@@ -43,7 +43,13 @@ menu "Example Configurations"
             string "Inbound smart-car data topic"
             default "smartcar/attitude"
             help
-                Smart-car telemetry topic published by the ESP32-S3 patrol car. The current parser understands payloads like {"r":1.25,"p":-2.50,"y":178.80,"mag":true,"ts":123456789}.
+                  Smart-car telemetry topic published by the ESP32-S3 patrol car. The current parser understands payloads like {"r":1.25,"p":-2.50,"y":178.80,"mag":true,"ts":123456789}.
+
+        config HOMECARE_MQTT_INBOUND_SYSTEM_STATUS_TOPIC
+            string "Inbound smart-car system status topic"
+            default "smartcar/system/status"
+            help
+                Retained SmartCar state-machine status used to drive the terminal scene mode.
 
         config HOMECARE_MQTT_INBOUND_AUX_TOPIC
             string "Inbound auxiliary device topic"
@@ -90,5 +96,90 @@ menu "Example Configurations"
             default 15
             help
                 Background refresh interval for real weather data.
+    endmenu
+
+    menu "CameraMode MQTT Viewer"
+        config CAMERA_MQTT_ENABLE
+            bool "Enable CameraMode MQTT JPEG receiver"
+            default y
+            help
+                Subscribes to the CameraMode JPEG topic and displays the received
+                binary JPEG frames in the Camera app. Leave the broker URI empty to
+                keep the receiver disabled at runtime.
+
+        config CAMERA_MQTT_BROKER_URI
+            string "MQTT broker URI"
+            depends on CAMERA_MQTT_ENABLE
+            default ""
+            help
+                Broker used by CameraMode. Use the same mqtt:// or mqtts:// URI as
+                the CameraMode sender.
+
+        config CAMERA_MQTT_CLIENT_ID
+            string "MQTT client ID"
+            depends on CAMERA_MQTT_ENABLE
+            default "brookesia-camera-viewer"
+
+        config CAMERA_MQTT_USERNAME
+            string "MQTT username"
+            depends on CAMERA_MQTT_ENABLE
+            default ""
+
+        config CAMERA_MQTT_PASSWORD
+            string "MQTT password"
+            depends on CAMERA_MQTT_ENABLE
+            default ""
+
+        config CAMERA_MQTT_JPEG_TOPIC
+            string "JPEG binary topic"
+            depends on CAMERA_MQTT_ENABLE
+            default "cam/jpeg"
+            help
+                CameraMode publishes binary JPEG frames to this topic.
+
+        config CAMERA_MQTT_CONTROL_TOPIC
+            string "Control topic"
+            depends on CAMERA_MQTT_ENABLE
+            default ""
+            help
+                Leave empty to use JPEG topic + /control. The Camera app publishes
+                {"cmd":"mode","value":"mqtt"} or {"cmd":"mode","value":"lcd"} here.
+
+        config CAMERA_MQTT_STATUS_TOPIC
+            string "Status topic"
+            depends on CAMERA_MQTT_ENABLE
+            default ""
+            help
+                Leave empty to use JPEG topic + /status. CameraMode publishes
+                retained JSON such as {"mode":"mqtt"} here.
+
+        config CAMERA_MQTT_MAX_JPEG_BYTES
+            int "Maximum JPEG payload bytes"
+            depends on CAMERA_MQTT_ENABLE
+            range 4096 1048576
+            default 262144
+
+        config CAMERA_MQTT_BUFFER_SIZE
+            int "MQTT receive buffer size"
+            depends on CAMERA_MQTT_ENABLE
+            range 4096 262144
+            default 8192
+            help
+                ESP-MQTT may still split a large frame into multiple callbacks; the
+                receiver reassembles fragments up to Maximum JPEG payload bytes.
+                Keep this small: it is allocated as one contiguous block from
+                internal RAM, so a large value can exhaust the heap and fail init.
+
+        config CAMERA_MQTT_DECODE_TASK_STACK
+            int "JPEG decode task stack"
+            depends on CAMERA_MQTT_ENABLE
+            range 4096 24576
+            default 8192
+
+        config CAMERA_MQTT_DECODE_TASK_PRIORITY
+            int "JPEG decode task priority"
+            depends on CAMERA_MQTT_ENABLE
+            range 1 15
+            default 5
     endmenu
 endmenu

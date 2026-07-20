@@ -177,6 +177,9 @@ static bool json_extract_float(const char *payload, int payload_len, const char 
     if (value == nullptr) {
         return false;
     }
+    if (*value == '"') {
+        ++value;
+    }
 
     char number[32] = {};
     size_t written = 0;
@@ -213,6 +216,9 @@ static bool json_extract_i64(const char *payload, int payload_len, const char *k
     if (value == nullptr) {
         return false;
     }
+    if (*value == '"') {
+        ++value;
+    }
 
     char number[32] = {};
     size_t written = 0;
@@ -237,6 +243,66 @@ static bool json_extract_i64(const char *payload, int payload_len, const char *k
 
     *out = parsed;
     return true;
+}
+
+static bool json_extract_int_array(const char *payload, int payload_len, const char *key,
+                                   int *out, int out_count, int *parsed_count)
+{
+    if (payload == nullptr || key == nullptr || out == nullptr || parsed_count == nullptr ||
+        payload_len <= 0 || out_count <= 0) {
+        return false;
+    }
+
+    const char *value = json_find_value_start(payload, payload_len, key);
+    const char *end = payload + payload_len;
+    if (value == nullptr || value >= end || *value != '[') {
+        return false;
+    }
+    ++value;
+
+    int count = 0;
+    while (value < end && count < out_count) {
+        while (value < end && (isspace(static_cast<unsigned char>(*value)) || *value == ',')) {
+            ++value;
+        }
+        if (value >= end || *value == ']') {
+            break;
+        }
+
+        char number[16] = {};
+        size_t written = 0;
+        while (value < end && written + 1 < sizeof(number)) {
+            const char ch = *value;
+            if (!(isdigit(static_cast<unsigned char>(ch)) || ch == '-' || ch == '+')) {
+                break;
+            }
+            number[written++] = ch;
+            ++value;
+        }
+        if (written == 0) {
+            return false;
+        }
+
+        char *parse_end = nullptr;
+        const long parsed = strtol(number, &parse_end, 10);
+        if (parse_end == number) {
+            return false;
+        }
+        out[count++] = static_cast<int>(parsed);
+
+        while (value < end && isspace(static_cast<unsigned char>(*value))) {
+            ++value;
+        }
+        if (value < end && *value == ']') {
+            break;
+        }
+        if (value < end && *value != ',') {
+            return false;
+        }
+    }
+
+    *parsed_count = count;
+    return count > 0;
 }
 
 static int clamp_percent_value(long long value)
@@ -497,6 +563,117 @@ static bool parse_smartcar_system_status_payload(const char *payload, int payloa
     return true;
 }
 
+static bool parse_csi_summary_payload(const char *payload, int payload_len,
+                                      HomeCareMqttInboundMessage *out)
+{
+    if (payload == nullptr || out == nullptr || payload_len < 0) {
+        return false;
+    }
+
+    HomeCareMqttCsiSummary summary = {};
+    long long value = 0;
+    if (!json_extract_string(payload, payload_len, "device_id",
+                             summary.device_id, sizeof(summary.device_id))) {
+        copy_text(summary.device_id, sizeof(summary.device_id), "unknown", strlen("unknown"));
+    }
+    if (json_extract_i64(payload, payload_len, "seq", &value)) {
+        summary.seq = value;
+    }
+    if (json_extract_i64(payload, payload_len, "timestamp", &value) ||
+        json_extract_i64(payload, payload_len, "ts", &value)) {
+        summary.timestamp_ms = value;
+    }
+    if (json_extract_i64(payload, payload_len, "rssi", &value)) {
+        summary.rssi = static_cast<int>(value);
+    }
+    if (json_extract_i64(payload, payload_len, "channel", &value)) {
+        summary.channel = static_cast<int>(value);
+    }
+    if (json_extract_i64(payload, payload_len, "len", &value)) {
+        summary.len = static_cast<int>(value);
+    }
+    json_extract_float(payload, payload_len, "energy", &summary.energy);
+
+    int amp_count = 0;
+    if (!json_extract_int_array(payload, payload_len, "amp", summary.amp,
+                                HOMECARE_MQTT_CSI_AMP_MAX_COUNT, &amp_count)) {
+        return false;
+    }
+    summary.amp_count = amp_count;
+    if (summary.len <= 0) {
+        summary.len = amp_count;
+    }
+    summary.valid = true;
+
+    out->type = HOMECARE_MQTT_INBOUND_EVENT;
+    out->has_csi_summary = true;
+    out->csi_summary = summary;
+    copy_text(out->event.level, sizeof(out->event.level), "L1", 2);
+    if (summary.timestamp_ms > 0) {
+        snprintf(out->event.time, sizeof(out->event.time), "%lld", summary.timestamp_ms);
+    } else {
+        copy_text(out->event.time, sizeof(out->event.time), "MQTT", 4);
+    }
+    snprintf(out->event.text, sizeof(out->event.text),
+             "CSI summary %s energy %.2f len %d",
+             summary.device_id, summary.energy, summary.amp_count);
+    return true;
+}
+
+static bool parse_radar_result_payload(const char *payload, int payload_len,
+                                       HomeCareMqttInboundMessage *out)
+{
+    if (payload == nullptr || out == nullptr || payload_len < 0) {
+        return false;
+    }
+
+    HomeCareMqttRadarResult result = {};
+    long long int_value = 0;
+    if (!json_extract_string(payload, payload_len, "device_id",
+                             result.device_id, sizeof(result.device_id))) {
+        copy_text(result.device_id, sizeof(result.device_id), "unknown", strlen("unknown"));
+    }
+    if (json_extract_i64(payload, payload_len, "seq", &int_value)) {
+        result.seq = int_value;
+    }
+    if (json_extract_i64(payload, payload_len, "timestamp", &int_value) ||
+        json_extract_i64(payload, payload_len, "ts", &int_value)) {
+        result.timestamp_ms = int_value;
+    }
+    json_extract_float(payload, payload_len, "waveform_wander", &result.waveform_wander);
+    json_extract_float(payload, payload_len, "waveform_jitter", &result.waveform_jitter);
+    json_extract_float(payload, payload_len, "waveform_wander_threshold",
+                       &result.waveform_wander_threshold);
+    json_extract_float(payload, payload_len, "waveform_jitter_threshold",
+                       &result.waveform_jitter_threshold);
+    if (json_extract_i64(payload, payload_len, "someone_status", &int_value)) {
+        result.someone_status = static_cast<int>(int_value);
+    }
+    if (json_extract_i64(payload, payload_len, "move_status", &int_value)) {
+        result.move_status = static_cast<int>(int_value);
+    }
+    result.valid = true;
+
+    out->type = HOMECARE_MQTT_INBOUND_EVENT;
+    out->has_radar_result = true;
+    out->radar_result = result;
+    copy_text(out->event.level, sizeof(out->event.level),
+              (result.someone_status || result.move_status) ? "L1" : "L0",
+              (result.someone_status || result.move_status) ? 2 : 2);
+    if (result.timestamp_ms > 0) {
+        snprintf(out->event.time, sizeof(out->event.time), "%lld", result.timestamp_ms);
+    } else {
+        copy_text(out->event.time, sizeof(out->event.time), "MQTT", 4);
+    }
+    /* 用整数表示（×1e6），避免 %.3f 触发 _dtoa_r 的大栈消耗 */
+    snprintf(out->event.text, sizeof(out->event.text),
+             "Radar %s s=%d m=%d w=%de-6 j=%de-6",
+             result.device_id, result.someone_status, result.move_status,
+             static_cast<int>(result.waveform_wander * 1e6f),
+             static_cast<int>(result.waveform_jitter * 1e6f));
+    return true;
+}
+
 homecare_mqtt_mode_t homecare_mqtt_mode_from_text(const char *text, size_t len)
 {
     if (text == nullptr) {
@@ -590,6 +767,14 @@ bool homecare_mqtt_parse_inbound(const char *topic, int topic_len,
         return parse_smartcar_system_status_payload(payload, payload_len, out);
     }
 
+    if (topic_has_suffix(topic, topic_len, "/csi/summary")) {
+        return parse_csi_summary_payload(payload, payload_len, out);
+    }
+
+    if (topic_has_suffix(topic, topic_len, "/radar/result")) {
+        return parse_radar_result_payload(payload, payload_len, out);
+    }
+
     if (topic_has_suffix(topic, topic_len, "/attitude") || strcmp(out->topic, "smartcar/attitude") == 0) {
         return parse_smartcar_attitude_payload(payload, payload_len, out);
     }
@@ -629,11 +814,11 @@ bool homecare_mqtt_format_action_with_request_id(homecare_mqtt_action_t action,
 
     const char *state = nullptr;
     const char *place = "";
-    bool drive_stop = false;
+    bool nav_stop = false;
     switch (action) {
     case HOMECARE_MQTT_ACTION_PATROL: state = "cruise"; break;
     case HOMECARE_MQTT_ACTION_RECHARGE: state = "return_home"; break;
-    case HOMECARE_MQTT_ACTION_STOP: drive_stop = true; break;
+    case HOMECARE_MQTT_ACTION_STOP: nav_stop = true; break;
     case HOMECARE_MQTT_ACTION_ABNORMAL_BATHROOM: state = "abnormal"; place = "bathroom"; break;
     case HOMECARE_MQTT_ACTION_ABNORMAL_BEDROOM: state = "abnormal"; place = "bedroom"; break;
     case HOMECARE_MQTT_ACTION_ABNORMAL_KITCHEN: state = "abnormal"; place = "kitchen"; break;
@@ -642,9 +827,9 @@ bool homecare_mqtt_format_action_with_request_id(homecare_mqtt_action_t action,
 
     memset(out, 0, sizeof(*out));
     copy_text(out->topic_suffix, sizeof(out->topic_suffix), "smartcar/cmd", strlen("smartcar/cmd"));
-    if (drive_stop) {
+    if (nav_stop) {
         snprintf(out->payload, sizeof(out->payload),
-                 "{\"data\":{\"drive\":\"stop\"},\"requestId\":\"%s\"}", request_id);
+                 "{\"requestId\":\"%s\",\"data\":{\"action\":\"stop\"}}", request_id);
     } else {
         snprintf(out->payload, sizeof(out->payload),
                  "{\"cmd\":\"system\",\"state\":\"%s\",\"place\":\"%s\",\"requestId\":\"%s\"}",

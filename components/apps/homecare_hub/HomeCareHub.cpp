@@ -16,9 +16,11 @@
 #include <algorithm>
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "HomeCareHub.hpp"
 #include "HomeCareWeather.hpp"
 #include "HomeCareWeatherCity.hpp"
+#include "camera_viewer/CameraMqttReceiver.hpp"
 
 /* 外部资源声明：应用图标和中文字体（不同字号） */
 LV_IMG_DECLARE(img_app_setting);
@@ -210,6 +212,8 @@ HomeCareHub::HomeCareHub():
     _mqtt_event_color(HUB_BLUE_COLOR),
     _has_smartcar_attitude(false),
     _smartcar_attitude({}),
+    _has_csi_summary(false),
+    _latest_csi_summary({}),
     _smartcar_system_status(HOMECARE_MQTT_SYSTEM_STATUS_UNKNOWN),
     _weather_revision(0),
     _root(nullptr),
@@ -240,6 +244,10 @@ HomeCareHub::HomeCareHub():
     _comfort_temp_label(nullptr),
     _comfort_status_label(nullptr),
     _temp_arc(nullptr),
+    _csi_panel(nullptr),
+    _csi_status_label(nullptr),
+    _csi_chart(nullptr),
+    _csi_chart_series(nullptr),
     _light_label(nullptr),
     _power_label(nullptr),
     _online_count_label(nullptr),
@@ -252,6 +260,11 @@ HomeCareHub::HomeCareHub():
     _sensor_label(nullptr),
     _voice_label(nullptr),
     _return_button(nullptr),
+    _camera_panel(nullptr),
+    _camera_image(nullptr),
+    _camera_status_label(nullptr),
+    _camera_empty_label(nullptr),
+    _camera_frame_version(0),
     _room_cards({}),
     _room_accent_bars({}),
     _room_name_labels({}),
@@ -263,12 +276,12 @@ HomeCareHub::HomeCareHub():
     _event_level_labels({}),
     _event_time_labels({}),
     _event_text_labels({}),
-    _scene_cards({}),
-    _scene_name_labels({}),
-    _scene_desc_labels({}),
-    _device_cards({}),
-    _device_state_labels({}),
-    _device_switches({})
+    _smartcar_online_label(nullptr),
+    _camera_online_label(nullptr),
+    _csi_online_label(nullptr),
+    _smartcar_detail_label(nullptr),
+    _camera_detail_label(nullptr),
+    _csi_detail_label(nullptr)
 {
 }
 
@@ -306,7 +319,9 @@ bool HomeCareHub::run(void)
     _height = visual_h > 0 ? static_cast<uint16_t>(visual_h) : static_cast<uint16_t>(lv_disp_get_ver_res(nullptr));
 
     createUi();
+    camera_mqtt_receiver_set_active(true);
     setMode(MODE_NORMAL);
+    refreshCameraPreview(true);
     _mqtt_timer = lv_timer_create(timerCb, 1000, this);
     if (_mqtt_timer == nullptr) {
         ESP_LOGE(TAG, "Create HomeCare timers failed");
@@ -332,6 +347,7 @@ bool HomeCareHub::back(void)
 bool HomeCareHub::close(void)
 {
     deleteTimer();
+    camera_mqtt_receiver_set_active(false);
     if (_root != nullptr) {
         lv_obj_del(_root);
         _root = nullptr;
@@ -363,6 +379,10 @@ bool HomeCareHub::close(void)
     _comfort_temp_label = nullptr;
     _comfort_status_label = nullptr;
     _temp_arc = nullptr;
+    _csi_panel = nullptr;
+    _csi_status_label = nullptr;
+    _csi_chart = nullptr;
+    _csi_chart_series = nullptr;
     _light_label = nullptr;
     _power_label = nullptr;
     _online_count_label = nullptr;
@@ -375,6 +395,11 @@ bool HomeCareHub::close(void)
     _sensor_label = nullptr;
     _voice_label = nullptr;
     _return_button = nullptr;
+    _camera_panel = nullptr;
+    _camera_image = nullptr;
+    _camera_status_label = nullptr;
+    _camera_empty_label = nullptr;
+    _camera_frame_version = 0;
     _room_cards.fill(nullptr);
     _room_accent_bars.fill(nullptr);
     _room_name_labels.fill(nullptr);
@@ -386,12 +411,12 @@ bool HomeCareHub::close(void)
     _event_level_labels.fill(nullptr);
     _event_time_labels.fill(nullptr);
     _event_text_labels.fill(nullptr);
-    _scene_cards.fill(nullptr);
-    _scene_name_labels.fill(nullptr);
-    _scene_desc_labels.fill(nullptr);
-    _device_cards.fill(nullptr);
-    _device_state_labels.fill(nullptr);
-    _device_switches.fill(nullptr);
+    _smartcar_online_label = nullptr;
+    _camera_online_label = nullptr;
+    _csi_online_label = nullptr;
+    _smartcar_detail_label = nullptr;
+    _camera_detail_label = nullptr;
+    _csi_detail_label = nullptr;
     return true;
 }
 
@@ -579,7 +604,7 @@ void HomeCareHub::updatePageIndicator(int page)
  * │ 品牌标识 │ 时间/日期 │ 模式/温度/隐私胶囊       │
  * ├────────┬────────────────┬─────────────────────────┤
  * │ 左侧面板 │   中央面板     │       右侧面板          │
- * │ 天气卡片 │ 场景按钮行     │ 常用设备控制            │
+ * │ 天气卡片 │ 场景按钮行     │ 设备在线状态            │
  * │ 房间列表 │ 舒适度+监控    │ 门厅安防摄像头          │
  * │ 自动化   │               │ 语音助手                │
  * └────────┴────────────────┴─────────────────────────┘
@@ -788,74 +813,34 @@ bool HomeCareHub::createUi(void)
         lv_obj_align(*metric_values[i], LV_ALIGN_BOTTOM_RIGHT, 0, 1);
     }
 
-    /* ---------- 房间状态列表 ---------- */
-    lv_obj_t *rooms = createPanel(page_overview, col_w, hero_h - 132 - gap, HUB_PANEL_COLOR);
-    lv_obj_align_to(rooms, weather, LV_ALIGN_OUT_BOTTOM_LEFT, 0, gap);
-    createSectionHeader(rooms, "房间", "6 区在线", col_w - 24, 30);
+    /* ---------- CSI waveform display (replaces the bottom four scene cards) ---------- */
+    lv_obj_t *csi_panel = createPanel(page_overview, page_w, lower_h, HUB_PANEL_COLOR);
+    lv_obj_set_size(csi_panel, page_w, lower_h);
+    lv_obj_align(csi_panel, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    _csi_panel = csi_panel;
+    createSectionHeader(csi_panel, "CSI 波形", "MQTT 实时", page_w - 24, 30);
 
-    const char *room_names[] = {"客厅", "主卧", "厨房", "书房"};
-    const char *room_desc[] = {"主灯 68% · 空调 25°", "窗帘关闭 · 静音", "排风运行 · 烟感正常", "台灯 42% · 空气优"};
-    const char *room_tags[] = {"舒适", "睡眠", "运行", "安静"};
-    const char *room_icons[] = {LV_SYMBOL_HOME, LV_SYMBOL_AUDIO, LV_SYMBOL_SETTINGS, LV_SYMBOL_EDIT};
-    const int room_row_h = 30;
+    _csi_status_label = nullptr;
 
-    for (int i = 0; i < 4; ++i) {
-        lv_obj_t *card = createPanel(rooms, col_w - 24, room_row_h, HUB_PANEL_SOLID_COLOR);
-        lv_obj_align(card, LV_ALIGN_TOP_LEFT, 0, 34 + i * (room_row_h + 4));
-        lv_obj_set_style_shadow_width(card, 0, 0);
-        lv_obj_set_style_pad_left(card, 8, 0);
-        lv_obj_set_style_pad_right(card, 8, 0);
-        lv_obj_set_style_pad_top(card, 5, 0);
-        lv_obj_set_style_pad_bottom(card, 5, 0);
-        _room_cards[i] = card;
-        _room_accent_bars[i] = lv_obj_create(card);
-        lv_obj_clear_flag(_room_accent_bars[i], LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_move_background(_room_accent_bars[i]);
-        lv_obj_t *icon = createIconLabel(card, room_icons[i], HUB_MUTED_COLOR);
-        lv_obj_align(icon, LV_ALIGN_LEFT_MID, 0, 0);
-        _room_name_labels[i] = createLabel(card, room_names[i], HUB_FONT_SMALL, HUB_TEXT_COLOR);
-        lv_obj_align(_room_name_labels[i], LV_ALIGN_TOP_LEFT, 24, -1);
-        _room_activity_labels[i] = createLabel(card, room_desc[i], HUB_FONT_SMALL, HUB_MUTED_COLOR);
-        lv_obj_set_width(_room_activity_labels[i], col_w - 108);
-        lv_obj_align(_room_activity_labels[i], LV_ALIGN_BOTTOM_LEFT, 24, 1);
-        _room_risk_labels[i] = createLabel(card, room_tags[i], HUB_FONT_SMALL, i == 0 ? HUB_CYAN_COLOR : HUB_MUTED_COLOR);
-        lv_obj_align(_room_risk_labels[i], LV_ALIGN_RIGHT_MID, 0, 0);
-        _room_csi_labels[i] = nullptr;
+    _csi_chart = lv_chart_create(csi_panel);
+    lv_obj_set_size(_csi_chart, page_w - 24, lower_h - 46);
+    lv_obj_align(_csi_chart, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_chart_set_type(_csi_chart, LV_CHART_TYPE_LINE);
+    lv_chart_set_point_count(_csi_chart, HOMECARE_MQTT_CSI_AMP_MAX_COUNT);
+    lv_chart_set_range(_csi_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 160);
+    lv_obj_set_style_bg_color(_csi_chart, HUB_PANEL_SOLID_COLOR, 0);
+    lv_obj_set_style_bg_opa(_csi_chart, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_csi_chart, 1, 0);
+    lv_obj_set_style_border_color(_csi_chart, HUB_LINE_COLOR, 0);
+    lv_obj_set_style_radius(_csi_chart, 8, 0);
+    lv_obj_set_style_pad_all(_csi_chart, 8, 0);
+    lv_obj_set_style_line_width(_csi_chart, 2, LV_PART_ITEMS);
+    lv_obj_set_style_size(_csi_chart, 0, LV_PART_INDICATOR);
+    _csi_chart_series = lv_chart_add_series(_csi_chart, HUB_BLUE_COLOR, LV_CHART_AXIS_PRIMARY_Y);
+    for (uint16_t i = 0; i < HOMECARE_MQTT_CSI_AMP_MAX_COUNT; ++i) {
+        lv_chart_set_value_by_id(_csi_chart, _csi_chart_series, i, 0);
     }
-
-    /* ---------- 场景按钮栏 ---------- */
-    lv_obj_t *scene_dock = lv_obj_create(page_overview);
-    lv_obj_set_size(scene_dock, page_w, lower_h);
-    lv_obj_align(scene_dock, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    styleFlatContainer(scene_dock);
-    lv_obj_set_style_pad_column(scene_dock, gap, 0);
-    lv_obj_set_flex_flow(scene_dock, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(scene_dock, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    const char *scene_names[] = {"晨起", "会客", "观影", "睡眠"};
-    const char *scene_desc[] = {"窗帘 · 音乐", "主灯 · 空调", "投影 · 遮光", "静音 · 布防"};
-    const char *scene_icons[] = {LV_SYMBOL_UP, LV_SYMBOL_HOME, LV_SYMBOL_PLAY, LV_SYMBOL_EYE_CLOSE};
-    const int scene_w = (page_w - gap * 3) / 4;
-
-    for (int i = 0; i < MODE_MAX; ++i) {
-        lv_obj_t *scene = lv_btn_create(scene_dock);
-        lv_obj_set_size(scene, scene_w, lower_h);
-        lv_obj_set_style_bg_color(scene, i == 0 ? HUB_CYAN_COLOR : HUB_PANEL_SOLID_COLOR, 0);
-        lv_obj_set_style_border_width(scene, 1, 0);
-        lv_obj_set_style_border_color(scene, i == 0 ? HUB_CYAN_COLOR : HUB_LINE_COLOR, 0);
-        lv_obj_set_style_radius(scene, 8, 0);
-        lv_obj_set_style_shadow_width(scene, 0, 0);
-        lv_obj_add_event_cb(scene, scenarioEventCb, LV_EVENT_CLICKED, this);
-        lv_obj_set_user_data(scene, reinterpret_cast<void *>(static_cast<intptr_t>(i)));
-        _scene_cards[i] = scene;
-        lv_obj_t *scene_icon = createIconLabel(scene, scene_icons[i], i == 0 ? HUB_BG_COLOR : HUB_TEXT_COLOR);
-        lv_obj_align(scene_icon, LV_ALIGN_TOP_MID, 0, 8);
-        _scene_name_labels[i] = createLabel(scene, scene_names[i], HUB_FONT_SMALL, i == 0 ? HUB_BG_COLOR : HUB_TEXT_COLOR);
-        lv_obj_align(_scene_name_labels[i], LV_ALIGN_CENTER, 0, 5);
-        _scene_desc_labels[i] = createLabel(scene, scene_desc[i], HUB_FONT_SMALL, i == 0 ? HUB_BG_COLOR : HUB_MUTED_COLOR);
-        lv_obj_set_width(_scene_desc_labels[i], scene_w - 8);
-        lv_obj_align(_scene_desc_labels[i], LV_ALIGN_BOTTOM_MID, 0, -6);
-    }
+    lv_chart_refresh(_csi_chart);
 
     /* ==================== Page 2: Patrol ==================== */
     lv_obj_t *car = createPanel(page_patrol, col_w, content_h, HUB_PANEL_COLOR);
@@ -888,7 +873,7 @@ bool HomeCareHub::createUi(void)
     lv_obj_set_style_pad_column(place_actions, 8, 0);
     lv_obj_set_flex_flow(place_actions, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(place_actions, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    const char *place_texts[] = {"卫生间", "卧室", "厨房"};
+    const char *place_texts[] = {"浴室异常", "卧室异常", "厨房异常"};
     const int place_action_ids[] = {5, 6, 7};
     const int place_action_w = (col_w - 24 - 16) / 3;
     for (int i = 0; i < 3; ++i) {
@@ -908,7 +893,7 @@ bool HomeCareHub::createUi(void)
     lv_obj_set_style_pad_column(car_actions, 8, 0);
     lv_obj_set_flex_flow(car_actions, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(car_actions, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    const char *car_action_texts[] = {"巡逻", "回充", "停止"};
+    const char *car_action_texts[] = {"巡航", "返航", "停止"};
     const int car_action_ids[] = {0, 1, 2};
     const lv_color_t car_action_colors[] = {HUB_TEXT_COLOR, HUB_BLUE_COLOR, HUB_CORAL_COLOR};
     const int car_action_w = (col_w - 24 - 16) / 3;
@@ -929,51 +914,57 @@ bool HomeCareHub::createUi(void)
 
     lv_obj_t *security = createPanel(page_patrol, col_w, content_h, HUB_PANEL_COLOR);
     lv_obj_align_to(security, car, LV_ALIGN_OUT_RIGHT_TOP, gap, 0);
-    createSectionHeader(security, "门厅安防", "实时", col_w - 24, 30);
+    createSectionHeader(security, "摄像头", "cam/jpeg 实时", col_w - 24, 30);
 
-    lv_obj_t *security_body = createLabel(security, "摄像头画面请打开 Camera 应用查看",
-                                          HUB_FONT_SMALL, HUB_MUTED_COLOR);
-    lv_obj_set_width(security_body, col_w - 24);
-    lv_label_set_long_mode(security_body, LV_LABEL_LONG_WRAP);
-    lv_obj_align(security_body, LV_ALIGN_TOP_LEFT, 0, 48);
+    _camera_panel = createPanel(security, col_w - 24, content_h - 92, HUB_PANEL_SOLID_COLOR);
+    lv_obj_align(_camera_panel, LV_ALIGN_TOP_LEFT, 0, 44);
+    lv_obj_set_style_shadow_width(_camera_panel, 0, 0);
+    lv_obj_set_style_pad_all(_camera_panel, 0, 0);
+    lv_obj_set_style_bg_color(_camera_panel, lv_color_hex(0x0F172A), 0);
+    lv_obj_set_style_border_color(_camera_panel, HUB_LINE_STRONG_COLOR, 0);
 
-    lv_obj_t *security_status = createLabel(security, "在家 · 周界正常", HUB_FONT_SMALL, HUB_GREEN_COLOR);
-    lv_obj_align(security_status, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    _camera_image = lv_img_create(_camera_panel);
+    lv_obj_center(_camera_image);
 
-    lv_obj_t *security_modes = lv_obj_create(security);
-    lv_obj_set_size(security_modes, 150, 26);
-    lv_obj_align(security_modes, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
-    styleFlatContainer(security_modes);
-    lv_obj_set_style_pad_column(security_modes, 6, 0);
-    lv_obj_set_flex_flow(security_modes, LV_FLEX_FLOW_ROW);
-    const char *mode_texts[] = {"在家", "离家", "夜间"};
-    for (int i = 0; i < 3; ++i) {
-        lv_obj_t *mode = lv_btn_create(security_modes);
-        lv_obj_set_size(mode, 46, 24);
-        styleButton(mode, i == 0 ? HUB_TEXT_COLOR : HUB_BLUE_COLOR, i == 0);
-        lv_obj_t *label = createLabel(mode, mode_texts[i], HUB_FONT_SMALL, i == 0 ? HUB_BG_COLOR : HUB_TEXT_COLOR);
-        lv_obj_center(label);
-    }
+    _camera_empty_label = createLabel(_camera_panel, "等待摄像头画面",
+                                      HUB_FONT_SMALL, lv_color_hex(0xE5E7EB));
+    lv_obj_center(_camera_empty_label);
+
+    _camera_status_label = createLabel(security, "摄像头 MQTT 待连接", HUB_FONT_SMALL, HUB_AMBER_COLOR);
+    lv_obj_align(_camera_status_label, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     /* ==================== Page 3: Control ==================== */
     lv_obj_t *devices = createPanel(page_control, col_w, content_h, HUB_PANEL_COLOR);
     lv_obj_align(devices, LV_ALIGN_TOP_LEFT, 0, 0);
-    createSectionHeader(devices, "常用设备", "18/21", col_w - 24, 30);
+    createSectionHeader(devices, "设备在线", "MQTT 实时", col_w - 24, 30);
 
-    const char *device_names[] = {"客厅主灯", "中央空调", "南向窗帘", "客厅音响"};
-    const char *device_states[] = {"亮度 68% · 暖白", "制冷 · 低风速", "开启 72%", "爵士电台 · 音量 32"};
-    const char *device_icons[] = {LV_SYMBOL_HOME, LV_SYMBOL_SETTINGS, LV_SYMBOL_UP, LV_SYMBOL_AUDIO};
+    const char *device_names[] = {"智能小车", "摄像头", "CSI 感知"};
+    const char *device_states[] = {
+        "smartcar/system/status · smartcar/attitude",
+        "cam/jpeg · cam/jpeg/status",
+        "devices/+/csi/summary",
+    };
+    const char *device_icons[] = {LV_SYMBOL_HOME, LV_SYMBOL_EYE_OPEN, LV_SYMBOL_SETTINGS};
+    lv_obj_t **online_labels[] = {
+        &_smartcar_online_label,
+        &_camera_online_label,
+        &_csi_online_label,
+    };
+    lv_obj_t **detail_labels[] = {
+        &_smartcar_detail_label,
+        &_camera_detail_label,
+        &_csi_detail_label,
+    };
+    const int device_count = 3;
 
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < device_count; ++i) {
         lv_obj_t *device = lv_obj_create(devices);
-        lv_obj_set_size(device, col_w - 24, 56);
-        lv_obj_align(device, LV_ALIGN_TOP_LEFT, 0, 48 + i * 66);
+        lv_obj_set_size(device, col_w - 24, 76);
+        lv_obj_align(device, LV_ALIGN_TOP_LEFT, 0, 52 + i * 88);
         styleFlatContainer(device);
-        _device_cards[i] = device;
 
-        /* 设备图标方块 */
         lv_obj_t *icon_box = lv_obj_create(device);
-        lv_obj_set_size(icon_box, 30, 30);
+        lv_obj_set_size(icon_box, 34, 34);
         lv_obj_align(icon_box, LV_ALIGN_LEFT_MID, 0, 0);
         lv_obj_set_style_bg_color(icon_box, HUB_PANEL_SOLID_COLOR, 0);
         lv_obj_set_style_border_width(icon_box, 1, 0);
@@ -984,25 +975,16 @@ bool HomeCareHub::createUi(void)
         lv_obj_t *device_icon = createIconLabel(icon_box, device_icons[i], HUB_TEXT_COLOR);
         lv_obj_center(device_icon);
 
-        /* 设备名称与状态文本 */
         lv_obj_t *name = createLabel(device, device_names[i], HUB_FONT_SMALL, HUB_TEXT_COLOR);
-        lv_obj_align(name, LV_ALIGN_TOP_LEFT, 40, 0);
-        _device_state_labels[i] = createLabel(device, device_states[i], HUB_FONT_SMALL, HUB_MUTED_COLOR);
-        lv_obj_set_width(_device_state_labels[i], col_w - 108);
-        lv_obj_align(_device_state_labels[i], LV_ALIGN_BOTTOM_LEFT, 40, 0);
+        lv_obj_align(name, LV_ALIGN_TOP_LEFT, 44, 4);
+        *detail_labels[i] = createLabel(device, device_states[i], HUB_FONT_SMALL, HUB_MUTED_COLOR);
+        lv_obj_set_width(*detail_labels[i], col_w - 112);
+        lv_obj_align(*detail_labels[i], LV_ALIGN_BOTTOM_LEFT, 44, -4);
 
-        /* 设备开关按钮 */
-        lv_obj_t *sw = lv_btn_create(device);
-        lv_obj_set_size(sw, 34, 18);
-        lv_obj_align(sw, LV_ALIGN_RIGHT_MID, 0, 0);
-        styleButton(sw, i == 3 ? HUB_FAINT_COLOR : HUB_CYAN_COLOR, i != 3);
-        if (i == 3) {
-            lv_obj_add_state(sw, LV_STATE_CHECKED);
-        }
-        lv_obj_add_event_cb(sw, actionEventCb, LV_EVENT_CLICKED, this);
-        lv_obj_set_user_data(sw, reinterpret_cast<void *>(static_cast<intptr_t>(10 + i)));
-        _device_switches[i] = sw;
+        *online_labels[i] = createLabel(device, "离线", HUB_FONT_SMALL, HUB_AMBER_COLOR);
+        lv_obj_align(*online_labels[i], LV_ALIGN_RIGHT_MID, 0, 0);
     }
+    updateDevicePresenceUi();
 
     lv_obj_t *right_stack = lv_obj_create(page_control);
     lv_obj_set_size(right_stack, col_w, content_h);
@@ -1130,6 +1112,104 @@ HomeCareHub::DemoMode HomeCareHub::fromMqttMode(homecare_mqtt_mode_t mode) const
     }
 }
 
+void HomeCareHub::updateCsiWaveformUi(void)
+{
+    if (!_has_csi_summary || !_latest_csi_summary.valid) {
+        return;
+    }
+
+    const int point_count = std::min(_latest_csi_summary.amp_count, HOMECARE_MQTT_CSI_AMP_MAX_COUNT);
+    if (point_count <= 0) {
+        return;
+    }
+
+    int max_amp = 1;
+    for (int i = 0; i < point_count; ++i) {
+        max_amp = std::max(max_amp, _latest_csi_summary.amp[i]);
+    }
+    const int chart_max = std::max(32, ((max_amp + 31) / 32) * 32);
+
+    if (_csi_chart != nullptr && _csi_chart_series != nullptr) {
+        lv_chart_set_range(_csi_chart, LV_CHART_AXIS_PRIMARY_Y, 0, chart_max);
+        for (uint16_t i = 0; i < HOMECARE_MQTT_CSI_AMP_MAX_COUNT; ++i) {
+            const lv_coord_t value = i < point_count ? static_cast<lv_coord_t>(_latest_csi_summary.amp[i]) : 0;
+            lv_chart_set_value_by_id(_csi_chart, _csi_chart_series, i, value);
+        }
+        lv_chart_refresh(_csi_chart);
+    }
+
+    if (_csi_status_label != nullptr) {
+        lv_label_set_text_fmt(_csi_status_label, "CSI %s | energy %.2f | RSSI %d | points %d",
+                              _latest_csi_summary.device_id,
+                              _latest_csi_summary.energy,
+                              _latest_csi_summary.rssi,
+                              point_count);
+        lv_obj_set_style_text_color(_csi_status_label, HUB_BLUE_COLOR, 0);
+    }
+}
+
+void HomeCareHub::updateDevicePresenceUi(void)
+{
+    const bool smartcar_online =
+        _smartcar_system_status != HOMECARE_MQTT_SYSTEM_STATUS_UNKNOWN ||
+        (_has_smartcar_attitude && _smartcar_attitude.valid);
+
+    CameraMqttSnapshot camera_snapshot = {};
+    camera_mqtt_receiver_get_status(&camera_snapshot);
+    const bool camera_online =
+        camera_snapshot.mqtt_connected &&
+        (camera_snapshot.decoded_frames > 0 ||
+         camera_snapshot.jpeg_frames > 0 ||
+         camera_snapshot.status_messages > 0);
+
+    const bool csi_online = _has_csi_summary && _latest_csi_summary.valid;
+
+    if (_smartcar_online_label != nullptr) {
+        lv_label_set_text(_smartcar_online_label, smartcar_online ? "在线" : "离线");
+        lv_obj_set_style_text_color(_smartcar_online_label, smartcar_online ? HUB_GREEN_COLOR : HUB_AMBER_COLOR, 0);
+    }
+    if (_camera_online_label != nullptr) {
+        lv_label_set_text(_camera_online_label, camera_online ? "在线" : "离线");
+        lv_obj_set_style_text_color(_camera_online_label, camera_online ? HUB_GREEN_COLOR : HUB_AMBER_COLOR, 0);
+    }
+    if (_csi_online_label != nullptr) {
+        lv_label_set_text(_csi_online_label, csi_online ? "在线" : "离线");
+        lv_obj_set_style_text_color(_csi_online_label, csi_online ? HUB_GREEN_COLOR : HUB_AMBER_COLOR, 0);
+    }
+
+    if (_smartcar_detail_label != nullptr) {
+        if (_smartcar_system_status != HOMECARE_MQTT_SYSTEM_STATUS_UNKNOWN) {
+            lv_label_set_text(_smartcar_detail_label, "system/status 已接收");
+        } else if (_has_smartcar_attitude && _smartcar_attitude.valid) {
+            lv_label_set_text(_smartcar_detail_label, "attitude 已接收");
+        } else {
+            lv_label_set_text(_smartcar_detail_label, "等待 smartcar MQTT 数据");
+        }
+    }
+    if (_camera_detail_label != nullptr) {
+        if (camera_snapshot.mqtt_connected && camera_snapshot.decoded_frames > 0) {
+            lv_label_set_text_fmt(_camera_detail_label, "JPEG %u 帧 · %ux%u",
+                                  static_cast<unsigned>(camera_snapshot.decoded_frames),
+                                  static_cast<unsigned>(camera_snapshot.width),
+                                  static_cast<unsigned>(camera_snapshot.height));
+        } else if (camera_snapshot.mqtt_connected) {
+            lv_label_set_text(_camera_detail_label, "MQTT 已连接 · 等待画面");
+        } else {
+            lv_label_set_text(_camera_detail_label, "等待 cam/jpeg MQTT 连接");
+        }
+    }
+    if (_csi_detail_label != nullptr) {
+        if (csi_online) {
+            lv_label_set_text_fmt(_csi_detail_label, "CSI %s · RSSI %d · points %d",
+                                  _latest_csi_summary.device_id,
+                                  _latest_csi_summary.rssi,
+                                  _latest_csi_summary.amp_count);
+        } else {
+            lv_label_set_text(_csi_detail_label, "等待 devices/+/csi/summary");
+        }
+    }
+}
+
 /**
  * @brief 处理单条 MQTT 入站消息
  *
@@ -1156,6 +1236,16 @@ void HomeCareHub::applyMqttMessage(const HomeCareMqttInboundMessage &message)
                  _smartcar_attitude.yaw_deg,
                  _smartcar_attitude.has_mag ? 1 : 0,
                  _smartcar_attitude.timestamp_ms);
+    }
+
+    if (message.has_csi_summary && message.csi_summary.valid) {
+        _has_csi_summary = true;
+        _latest_csi_summary = message.csi_summary;
+        ESP_LOGI(TAG, "CSI summary device=%s energy=%.2f rssi=%d points=%d",
+                 _latest_csi_summary.device_id,
+                 _latest_csi_summary.energy,
+                 _latest_csi_summary.rssi,
+                 _latest_csi_summary.amp_count);
     }
 
     if (message.type == HOMECARE_MQTT_INBOUND_EVENT) {
@@ -1423,6 +1513,12 @@ void HomeCareHub::updateUi(void)
 
     /* 更新四个房间卡片 */
     for (int i = 0; i < 4; ++i) {
+        if (_room_name_labels[i] == nullptr || _room_activity_labels[i] == nullptr ||
+            _room_risk_labels[i] == nullptr || _room_cards[i] == nullptr ||
+            _room_accent_bars[i] == nullptr) {
+            continue;
+        }
+
         const RoomState &room = state.rooms[i];
         lv_label_set_text(_room_name_labels[i], room.name);
         lv_label_set_text(_room_activity_labels[i], room.activity);
@@ -1430,18 +1526,6 @@ void HomeCareHub::updateUi(void)
         lv_obj_set_style_text_color(_room_risk_labels[i], room.accent, 0);
         lv_obj_set_style_bg_color(_room_cards[i], HUB_PANEL_SOLID_COLOR, 0);
         setCardAccent(_room_cards[i], _room_accent_bars[i], room.accent);
-    }
-
-    /* 更新场景按钮高亮状态（当前模式对应按钮变为青色填充） */
-    for (int i = 0; i < 4; ++i) {
-        if (_scene_cards[i] == nullptr) {
-            continue;
-        }
-        const bool active = (i == static_cast<int>(_mode));
-        lv_obj_set_style_bg_color(_scene_cards[i], active ? HUB_CYAN_COLOR : HUB_PANEL_SOLID_COLOR, 0);
-        lv_obj_set_style_border_color(_scene_cards[i], active ? HUB_CYAN_COLOR : HUB_LINE_COLOR, 0);
-        lv_obj_set_style_text_color(_scene_name_labels[i], active ? HUB_BG_COLOR : HUB_TEXT_COLOR, 0);
-        lv_obj_set_style_text_color(_scene_desc_labels[i], active ? HUB_BG_COLOR : HUB_MUTED_COLOR, 0);
     }
 
     /* 更新事件/日程列表 */
@@ -1460,9 +1544,12 @@ void HomeCareHub::updateUi(void)
         lv_label_set_text(_event_text_labels[0], _mqtt_event.text);
         lv_obj_set_style_text_color(_event_time_labels[0], _mqtt_event_color, 0);
     }
+
+    updateCsiWaveformUi();
+    refreshCameraPreview(false);
+    updateDevicePresenceUi();
 }
 
-#if 0
 void HomeCareHub::refreshCameraPreview(bool force)
 {
     if (_camera_panel == nullptr || _camera_image == nullptr || _camera_status_label == nullptr) {
@@ -1501,35 +1588,14 @@ void HomeCareHub::refreshCameraPreview(bool force)
         lv_obj_set_style_text_color(_camera_status_label, HUB_AMBER_COLOR, 0);
     }
 
-    if (!snapshot.receiver_enabled) {
-        lv_label_set_text(_camera_status_label, "Camera disabled");
-        lv_obj_set_style_text_color(_camera_status_label, HUB_AMBER_COLOR, 0);
-    } else if (snapshot.mqtt_connected && snapshot.decoded_frames > 0 && snapshot.width > 0 && snapshot.height > 0) {
-        lv_label_set_text_fmt(_camera_status_label, "JPEG OK | %ux%u",
-                              static_cast<unsigned>(snapshot.width),
-                              static_cast<unsigned>(snapshot.height));
-        lv_obj_set_style_text_color(_camera_status_label, HUB_GREEN_COLOR, 0);
-    } else if (snapshot.mqtt_connected && snapshot.status_messages > 0) {
-        lv_label_set_text_fmt(_camera_status_label, "Status OK | wait JPEG | %lu B",
-                              static_cast<unsigned long>(snapshot.last_jpeg_bytes));
-        lv_obj_set_style_text_color(_camera_status_label, HUB_AMBER_COLOR, 0);
-    } else if (snapshot.mqtt_connected) {
-        lv_label_set_text_fmt(_camera_status_label, "MQTT OK | Ctrl %s | no packet",
-                              snapshot.control_requests == 0 ? "pending" :
-                              (snapshot.last_control_result == ESP_OK ? "OK" : "FAIL"));
-        lv_obj_set_style_text_color(_camera_status_label,
-                                    snapshot.last_control_result == ESP_OK ? HUB_AMBER_COLOR : HUB_GREEN_COLOR, 0);
-    } else {
-        lv_label_set_text(_camera_status_label, "Camera MQTT disconnected");
-        lv_obj_set_style_text_color(_camera_status_label, HUB_AMBER_COLOR, 0);
-    }
-
     if (!has_new_frame || snapshot.image == nullptr) {
         return;
     }
 
     _camera_frame_version = snapshot.frame_version;
     lv_img_set_src(_camera_image, snapshot.image);
+    lv_img_set_pivot(_camera_image, snapshot.width / 2, snapshot.height / 2);
+    lv_img_set_angle(_camera_image, 1800);
 
     const int32_t panel_w = lv_obj_get_width(_camera_panel);
     const int32_t panel_h = lv_obj_get_height(_camera_panel);
@@ -1557,8 +1623,6 @@ void HomeCareHub::refreshCameraPreview(bool force)
  *
  * 从按钮的 user_data 中提取模式索引，切换本地场景并通过 MQTT 发布模式变更通知。
  */
-#endif
-
 void HomeCareHub::scenarioEventCb(lv_event_t *e)
 {
     HomeCareHub *app = static_cast<HomeCareHub *>(lv_event_get_user_data(e));
@@ -1574,7 +1638,6 @@ void HomeCareHub::scenarioEventCb(lv_event_t *e)
  * @brief 操作按钮点击回调
  *
  * 根据 user_data 中的 action ID 执行不同操作:
- * - 10~13: 设备开关切换（客厅主灯/空调/窗帘/音响）
  * - 0: 发送巡逻指令
  * - 1: 发送回充指令
  * - 2: 发送停止指令
@@ -1589,35 +1652,6 @@ void HomeCareHub::actionEventCb(lv_event_t *e)
     }
     lv_obj_t *btn = static_cast<lv_obj_t *>(lv_event_get_target(e));
     int action = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(btn)));
-
-    /* 设备开关切换（action 10~13 对应 4 个设备） */
-    if (action >= 10 && action < 14) {
-        const int index = action - 10;
-        if (app->_device_switches[index] != nullptr) {
-            const bool now_off = lv_obj_has_state(app->_device_switches[index], LV_STATE_CHECKED);
-            const bool now_enabled = now_off;
-            if (now_off) {
-                lv_obj_clear_state(app->_device_switches[index], LV_STATE_CHECKED);
-                lv_obj_set_style_bg_color(app->_device_switches[index], HUB_CYAN_COLOR, 0);
-            } else {
-                lv_obj_add_state(app->_device_switches[index], LV_STATE_CHECKED);
-                lv_obj_set_style_bg_color(app->_device_switches[index], HUB_FAINT_COLOR, 0);
-            }
-            static const char *const device_topics[] = {
-                "homecare/device/light",
-                "homecare/device/air_conditioner",
-                "homecare/device/curtain",
-                "homecare/device/speaker",
-            };
-            const char *payload = now_enabled ? "{\"state\":\"on\"}" : "{\"state\":\"off\"}";
-            esp_err_t err = homecare_mqtt_bridge_publish_raw(device_topics[index], payload, 1, 0);
-            if (err != ESP_OK) {
-                ESP_LOGW(TAG, "Publish device state failed: topic=%s err=%s",
-                         device_topics[index], esp_err_to_name(err));
-            }
-        }
-        return;
-    }
 
     /* 指令按钮 */
     if (action == 0) {
@@ -1687,4 +1721,6 @@ void HomeCareHub::timerCb(lv_timer_t *timer)
         weather_snapshot.revision != app->_weather_revision) {
         app->updateUi();
     }
+    app->refreshCameraPreview(false);
+    app->updateDevicePresenceUi();
 }

@@ -12,6 +12,8 @@ extern "C" {
 #define HOMECARE_MQTT_PAYLOAD_MAX_LEN 256
 #define HOMECARE_MQTT_TEXT_MAX_LEN 96
 #define HOMECARE_MQTT_FIELD_MAX_LEN 24
+#define HOMECARE_MQTT_DEVICE_ID_MAX_LEN 32
+#define HOMECARE_MQTT_CSI_AMP_MAX_COUNT 128
 
 typedef enum {
     HOMECARE_MQTT_MODE_NORMAL = 0,
@@ -66,6 +68,32 @@ typedef struct {
 } HomeCareMqttSmartCarAttitude;
 
 typedef struct {
+    bool valid;
+    char device_id[HOMECARE_MQTT_DEVICE_ID_MAX_LEN];
+    long long seq;
+    long long timestamp_ms;
+    int rssi;
+    int channel;
+    int len;
+    int amp_count;
+    int amp[HOMECARE_MQTT_CSI_AMP_MAX_COUNT];
+    float energy;
+} HomeCareMqttCsiSummary;
+
+typedef struct {
+    bool valid;
+    char device_id[HOMECARE_MQTT_DEVICE_ID_MAX_LEN];
+    long long seq;
+    long long timestamp_ms;
+    float waveform_wander;
+    float waveform_jitter;
+    float waveform_wander_threshold;
+    float waveform_jitter_threshold;
+    int someone_status;
+    int move_status;
+} HomeCareMqttRadarResult;
+
+typedef struct {
     homecare_mqtt_inbound_type_t type;
     char topic[HOMECARE_MQTT_TOPIC_MAX_LEN];
     bool has_mode;
@@ -75,6 +103,10 @@ typedef struct {
     HomeCareMqttEvent event;
     bool has_smartcar_attitude;
     HomeCareMqttSmartCarAttitude smartcar_attitude;
+    bool has_csi_summary;
+    HomeCareMqttCsiSummary csi_summary;
+    bool has_radar_result;
+    HomeCareMqttRadarResult radar_result;
 } HomeCareMqttInboundMessage;
 
 typedef struct {

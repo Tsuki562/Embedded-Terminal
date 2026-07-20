@@ -48,6 +48,14 @@
 #define CONFIG_HOMECARE_MQTT_INBOUND_AUX_TOPIC ""
 #endif
 
+#ifndef CONFIG_HOMECARE_MQTT_INBOUND_CSI_SUMMARY_TOPIC
+#define CONFIG_HOMECARE_MQTT_INBOUND_CSI_SUMMARY_TOPIC "devices/+/csi/summary"
+#endif
+
+#ifndef CONFIG_HOMECARE_MQTT_INBOUND_RADAR_RESULT_TOPIC
+#define CONFIG_HOMECARE_MQTT_INBOUND_RADAR_RESULT_TOPIC "devices/+/radar/result"
+#endif
+
 #ifndef CONFIG_HOMECARE_MQTT_BASE_TOPIC
 #define CONFIG_HOMECARE_MQTT_BASE_TOPIC "homecare/hub"
 #endif
@@ -242,6 +250,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         subscribe_topic_if_set(event->client, CONFIG_HOMECARE_MQTT_INBOUND_SMARTCAR_DATA_TOPIC);
         subscribe_topic_if_set(event->client, CONFIG_HOMECARE_MQTT_INBOUND_SYSTEM_STATUS_TOPIC);
         subscribe_topic_if_set(event->client, CONFIG_HOMECARE_MQTT_INBOUND_AUX_TOPIC);
+        subscribe_topic_if_set(event->client, CONFIG_HOMECARE_MQTT_INBOUND_CSI_SUMMARY_TOPIC, 0);
+        subscribe_topic_if_set(event->client, CONFIG_HOMECARE_MQTT_INBOUND_RADAR_RESULT_TOPIC, 0);
         if (camera_uses_shared_client()) {
             char camera_status_topic[96] = {};
             build_camera_status_topic(camera_status_topic, sizeof(camera_status_topic));
@@ -260,6 +270,19 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         ESP_LOGI(TAG, "MQTT disconnected");
         break;
     case MQTT_EVENT_DATA: {
+        /* smartcar/system/status 是 retain=true 主题。
+         * Broker 在新客户端订阅时会立即投递上一次小车关机前的历史消息，
+         * 此时小车并不一定在线。用 event->retain 标志识别并跳过这类历史消息，
+         * 只处理小车实时发出的状态更新。
+         * cam/jpeg（图传帧）不受此限制，始终处理。 */
+        const bool is_system_status = (event->topic_len > 0 &&
+            strncmp(event->topic, "smartcar/system/status",
+                    static_cast<size_t>(event->topic_len)) == 0);
+        if (event->retain && is_system_status) {
+            ESP_LOGI(TAG, "skip retained smartcar/system/status (car may be offline)");
+            break;
+        }
+
         if (camera_mqtt_receiver_accepts_topic(event->topic, event->topic_len)) {
             camera_mqtt_receiver_handle_mqtt_data(event->topic, event->topic_len,
                                                   event->data, event->data_len,
@@ -339,7 +362,7 @@ esp_err_t homecare_mqtt_bridge_init(void)
     mqtt_cfg.session.last_will.retain = 1;
     mqtt_cfg.network.timeout_ms = 6000;
     mqtt_cfg.network.reconnect_timeout_ms = 30000;
-    mqtt_cfg.task.stack_size = 4096;
+    mqtt_cfg.task.stack_size = 10240;  /* 增大：%.3f 浮点格式化(_dtoa_r)需要约 3KB 额外栈 */
     mqtt_cfg.buffer.size = 768;
     mqtt_cfg.buffer.out_size = 512;
     mqtt_cfg.outbox.limit = 2048;
@@ -385,7 +408,7 @@ esp_err_t homecare_mqtt_bridge_publish_action(homecare_mqtt_action_t action)
     HomeCareMqttOutboundMessage msg = {};
     if (action <= HOMECARE_MQTT_ACTION_ABNORMAL_KITCHEN) {
         char request_id[HOMECARE_MQTT_FIELD_MAX_LEN] = {};
-        const char *prefix = action == HOMECARE_MQTT_ACTION_STOP ? "drv" : "sys";
+        const char *prefix = action == HOMECARE_MQTT_ACTION_STOP ? "nav" : "sys";
         snprintf(request_id, sizeof(request_id), "%s_%lld", prefix,
                  static_cast<long long>(esp_timer_get_time() / 1000));
         if (!homecare_mqtt_format_action_with_request_id(action, request_id, &msg)) {

@@ -103,6 +103,61 @@ static void test_smartcar_system_status_maps_to_terminal_modes()
     }
 }
 
+static void test_csi_summary_topic_accepts_console_payload()
+{
+    HomeCareMqttInboundMessage msg = {};
+    const char *topic = "devices/esp32-aabbcc/csi/summary";
+    const char *payload =
+        "{\"type\":\"CSI_SUMMARY\",\"device_id\":\"esp32-aabbcc\","
+        "\"seq\":\"100\",\"timestamp\":\"124000\",\"rssi\":\"-45\","
+        "\"channel\":\"6\",\"len\":\"4\",\"amp\":[12,15,18,20],"
+        "\"energy\":\"16.54\"}";
+
+    assert(homecare_mqtt_parse_inbound(topic, static_cast<int>(std::strlen(topic)),
+                                       payload, static_cast<int>(std::strlen(payload)), &msg));
+    assert(msg.type == HOMECARE_MQTT_INBOUND_EVENT);
+    assert(msg.has_csi_summary);
+    assert(std::strcmp(msg.csi_summary.device_id, "esp32-aabbcc") == 0);
+    assert(msg.csi_summary.seq == 100);
+    assert(msg.csi_summary.timestamp_ms == 124000);
+    assert(msg.csi_summary.rssi == -45);
+    assert(msg.csi_summary.channel == 6);
+    assert(msg.csi_summary.len == 4);
+    assert(msg.csi_summary.amp_count == 4);
+    assert(msg.csi_summary.amp[0] == 12);
+    assert(msg.csi_summary.amp[3] == 20);
+    assert(msg.csi_summary.energy > 16.53f && msg.csi_summary.energy < 16.55f);
+    assert(std::strcmp(msg.event.level, "L1") == 0);
+    assert(std::strstr(msg.event.text, "CSI summary") != nullptr);
+}
+
+static void test_radar_result_topic_accepts_console_payload()
+{
+    HomeCareMqttInboundMessage msg = {};
+    const char *topic = "devices/esp32-aabbcc/radar/result";
+    const char *payload =
+        "{\"type\":\"RADAR_DADA\",\"canonical_type\":\"RADAR_DATA\","
+        "\"device_id\":\"esp32-aabbcc\",\"seq\":\"42\",\"timestamp\":\"123456\","
+        "\"waveform_wander\":\"0.123456\",\"waveform_jitter\":\"0.010000\","
+        "\"waveform_wander_threshold\":\"0.500000\","
+        "\"waveform_jitter_threshold\":\"0.020000\","
+        "\"someone_status\":\"1\",\"move_status\":\"0\"}";
+
+    assert(homecare_mqtt_parse_inbound(topic, static_cast<int>(std::strlen(topic)),
+                                       payload, static_cast<int>(std::strlen(payload)), &msg));
+    assert(msg.type == HOMECARE_MQTT_INBOUND_EVENT);
+    assert(msg.has_radar_result);
+    assert(std::strcmp(msg.radar_result.device_id, "esp32-aabbcc") == 0);
+    assert(msg.radar_result.seq == 42);
+    assert(msg.radar_result.timestamp_ms == 123456);
+    assert(msg.radar_result.someone_status == 1);
+    assert(msg.radar_result.move_status == 0);
+    assert(msg.radar_result.waveform_wander > 0.123f && msg.radar_result.waveform_wander < 0.124f);
+    assert(msg.radar_result.waveform_jitter > 0.009f && msg.radar_result.waveform_jitter < 0.011f);
+    assert(std::strcmp(msg.event.level, "L1") == 0);
+    assert(std::strstr(msg.event.text, "Radar") != nullptr);
+}
+
 static void test_outbound_action_is_formatted_for_forwarding()
 {
     HomeCareMqttOutboundMessage msg = {};
@@ -120,9 +175,9 @@ static void test_outbound_action_is_formatted_for_forwarding()
     assert(std::strcmp(msg.payload,
                        "{\"cmd\":\"system\",\"state\":\"return_home\",\"place\":\"\",\"requestId\":\"sys_101\"}") == 0);
 
-    assert(homecare_mqtt_format_action_with_request_id(HOMECARE_MQTT_ACTION_STOP, "drv_102", &msg));
+    assert(homecare_mqtt_format_action_with_request_id(HOMECARE_MQTT_ACTION_STOP, "nav_102", &msg));
     assert(std::strcmp(msg.payload,
-                       "{\"data\":{\"drive\":\"stop\"},\"requestId\":\"drv_102\"}") == 0);
+                       "{\"requestId\":\"nav_102\",\"data\":{\"action\":\"stop\"}}") == 0);
 
     assert(homecare_mqtt_format_action_with_request_id(HOMECARE_MQTT_ACTION_ABNORMAL_BATHROOM, "sys_103", &msg));
     assert(std::strcmp(msg.payload,
@@ -137,6 +192,8 @@ int main()
     test_smartcar_cmd_topic_accepts_plain_stop_payload();
     test_smartcar_attitude_topic_accepts_real_device_payload();
     test_smartcar_system_status_maps_to_terminal_modes();
+    test_csi_summary_topic_accepts_console_payload();
+    test_radar_result_topic_accepts_console_payload();
     test_outbound_action_is_formatted_for_forwarding();
     return 0;
 }

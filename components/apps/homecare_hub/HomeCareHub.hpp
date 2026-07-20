@@ -7,7 +7,7 @@
  * - 顶部状态栏（时间、日期、天气、隐私模式）
  * - 左侧面板（天气卡片、房间状态列表、自动化日程）
  * - 中央面板（场景模式切换、舒适度环形图表、实时监控）
- * - 右侧面板（常用设备控制、门厅安防摄像头、语音助手）
+ * - 右侧面板（设备在线状态、摄像头、CSI、语音助手）
  *
  * 支持 MQTT 远程控制场景切换和事件接收，以及后台天气数据刷新。
  */
@@ -124,6 +124,12 @@ private:
     void applyMqttMessages(void);
     /** @brief 处理单条 MQTT 入站消息（模式切换、事件注入、小车姿态更新） */
     void applyMqttMessage(const HomeCareMqttInboundMessage &message);
+    /** @brief 将最新 CSI summary 幅值数组刷新到 LVGL chart */
+    void updateCsiWaveformUi(void);
+    /** @brief 刷新第三页智能小车、摄像头与 CSI 的在线状态 */
+    void updateDevicePresenceUi(void);
+    /** @brief 将 Camera MQTT JPEG 最新解码帧刷新到第二页摄像头预览 */
+    void refreshCameraPreview(bool force);
     /** @brief 更新分页指示器圆点（当前页高亮拉长） */
     void updatePageIndicator(int page);
     /** @brief DemoMode → homecare_mqtt_mode_t 枚举转换 */
@@ -175,6 +181,8 @@ private:
     lv_color_t _mqtt_event_color;            /**< MQTT 事件的等级颜色 */
     bool _has_smartcar_attitude;             /**< 是否收到过智能小车姿态数据 */
     HomeCareMqttSmartCarAttitude _smartcar_attitude; /**< 智能小车最新姿态数据 */
+    bool _has_csi_summary;                   /**< 是否收到过 CSI summary 数据 */
+    HomeCareMqttCsiSummary _latest_csi_summary; /**< CSI 采集端最新幅值摘要 */
     homecare_mqtt_system_status_t _smartcar_system_status; /**< 小车状态机最新状态 */
     uint32_t _weather_revision;              /**< 上次渲染时的天气快照版本号（用于检测更新） */
 
@@ -211,6 +219,10 @@ private:
     lv_obj_t *_comfort_temp_label;    /**< 舒适度面板温度值（如"25°"） */
     lv_obj_t *_comfort_status_label;  /**< 舒适度面板状态描述 */
     lv_obj_t *_temp_arc;              /**< 温度环形指示器（18°~30°） */
+    lv_obj_t *_csi_panel;             /**< CSI 波形显示面板（替代原房间区域） */
+    lv_obj_t *_csi_status_label;      /**< CSI summary 状态文本 */
+    lv_obj_t *_csi_chart;             /**< CSI 幅值波形图 */
+    lv_chart_series_t *_csi_chart_series; /**< CSI 波形数据序列 */
     lv_obj_t *_light_label;           /**< 灯光亮度百分比 */
     lv_obj_t *_power_label;           /**< 功耗值（如"1.8kW"） */
     lv_obj_t *_online_count_label;    /**< 在线设备数（预留） */
@@ -225,6 +237,11 @@ private:
     lv_obj_t *_sensor_label;          /**< 传感器状态 */
     lv_obj_t *_voice_label;           /**< 语音状态 */
     lv_obj_t *_return_button;          /**< 仅在 abnormal_ready 时可用的返航按钮 */
+    lv_obj_t *_camera_panel;           /**< 第二页摄像头 JPEG 预览区域 */
+    lv_obj_t *_camera_image;           /**< Camera MQTT JPEG 解码图像 */
+    lv_obj_t *_camera_status_label;    /**< 摄像头 MQTT/JPEG 状态 */
+    lv_obj_t *_camera_empty_label;     /**< 未收到图像时的占位提示 */
+    uint32_t _camera_frame_version;     /**< 已显示的摄像头帧版本 */
 
     /* -- 房间卡片组（4 间房） -- */
     std::array<lv_obj_t *, 4> _room_cards;            /**< 房间卡片容器 */
@@ -241,13 +258,11 @@ private:
     std::array<lv_obj_t *, 4> _event_time_labels;  /**< 事件时间文本 */
     std::array<lv_obj_t *, 4> _event_text_labels;  /**< 事件描述文本 */
 
-    /* -- 场景按钮组（4 个场景） -- */
-    std::array<lv_obj_t *, 4> _scene_cards;       /**< 场景按钮容器 */
-    std::array<lv_obj_t *, 4> _scene_name_labels; /**< 场景名称标签 */
-    std::array<lv_obj_t *, 4> _scene_desc_labels; /**< 场景描述标签 */
-
-    /* -- 设备控制卡片组（4 个设备） -- */
-    std::array<lv_obj_t *, 4> _device_cards;        /**< 设备卡片容器 */
-    std::array<lv_obj_t *, 4> _device_state_labels; /**< 设备状态描述标签 */
-    std::array<lv_obj_t *, 4> _device_switches;     /**< 设备开关按钮 */
+    /* -- 第三页设备在线状态 -- */
+    lv_obj_t *_smartcar_online_label; /**< 智能小车在线状态标签 */
+    lv_obj_t *_camera_online_label;   /**< 摄像头在线状态标签 */
+    lv_obj_t *_csi_online_label;      /**< CSI 在线状态标签 */
+    lv_obj_t *_smartcar_detail_label; /**< 智能小车在线详情标签 */
+    lv_obj_t *_camera_detail_label;   /**< 摄像头在线详情标签 */
+    lv_obj_t *_csi_detail_label;      /**< CSI 在线详情标签 */
 };

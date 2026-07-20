@@ -57,6 +57,19 @@ menu "Example Configurations"
             help
                 Optional second external device topic. Leave empty to disable. This can be used later for uvc_st7735_display(1) after its actual MQTT publish topic is confirmed.
 
+        config HOMECARE_MQTT_INBOUND_CSI_SUMMARY_TOPIC
+            string "Inbound CSI summary topic"
+            default "devices/+/csi/summary"
+            help
+                CSI acquisition terminal summary topic. The payload is CSI_SUMMARY JSON
+                with amp[] values for lightweight P4-side waveform display.
+
+        config HOMECARE_MQTT_INBOUND_RADAR_RESULT_TOPIC
+            string "Inbound radar result topic"
+            default "devices/+/radar/result"
+            help
+                CSI acquisition terminal radar result topic used for presence/motion events.
+
         config HOMECARE_MQTT_BASE_TOPIC
             string "Base topic"
             default "homecare/hub"

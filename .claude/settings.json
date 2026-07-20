@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from docx.shared import RGBColor; c = RGBColor\\(0x00,0x46,0x8C\\); print\\(dir\\(c\\)\\); print\\(type\\(c\\)\\); print\\(hex\\(c\\)\\)\")",
+      "Bash(python -c \"from docx.shared import RGBColor; c = RGBColor\\(0x00,0x46,0x8C\\); print\\(c[0],c[1],c[2]\\); print\\(str\\(c\\)\\)\")"
+    ]
+  }
+}

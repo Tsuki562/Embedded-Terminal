@@ -59,27 +59,30 @@ static void test_homecare_terminal_uses_three_paged_sections()
     require_contains(source, "lv_obj_t *page_control = lv_obj_create(_pages);");
     require_contains(source, "updatePageIndicator(0);");
     require_contains(source, "Astra Home");
-    require_contains(source, "巡检车");
-    require_contains(source, "常用设备");
-    require_contains(source, "门厅安防");
-    require_contains(source, "语音助手");
+    require_contains(source, "lv_obj_t *car = createPanel(page_patrol, col_w, content_h, HUB_PANEL_COLOR);");
+    require_contains(source, "lv_obj_t *devices = createPanel(page_control, col_w, content_h, HUB_PANEL_COLOR);");
+    require_contains(source, "_camera_panel = createPanel(security");
+    require_contains(source, "lv_obj_t *assistant = createPanel(right_stack");
 }
 
 static void test_homecare_terminal_keeps_core_cards_and_controls()
 {
     const std::string source = read_file("components/apps/homecare_hub/HomeCareHub.cpp");
 
-    require_contains(source, "const char *room_names[] = {\"客厅\", \"主卧\", \"厨房\", \"书房\"};");
-    require_contains(source, "const char *scene_names[] = {\"晨起\", \"会客\", \"观影\", \"睡眠\"};");
-    require_contains(source, "const char *device_names[] = {\"客厅主灯\", \"中央空调\", \"南向窗帘\", \"客厅音响\"};");
-    require_contains(source, "lv_obj_set_style_bg_color(scene, i == 0 ? HUB_CYAN_COLOR : HUB_PANEL_SOLID_COLOR, 0);");
+    require_contains(source, "lv_obj_t *csi_panel = createPanel(page_overview, page_w, lower_h, HUB_PANEL_COLOR);");
+    require_contains(source, "lv_obj_set_size(csi_panel, page_w, lower_h);");
+    require_contains(source, "lv_obj_align(csi_panel, LV_ALIGN_BOTTOM_LEFT, 0, 0);");
+    require_contains(source, "createSectionHeader(csi_panel, \"CSI ");
+    require_contains(source, "const char *device_names[] = {");
+    require_not_contains(source, "lv_obj_t *scene_dock = lv_obj_create(page_overview);");
+    require_not_contains(source, "const char *scene_names[]");
+    require_not_contains(source, "lv_obj_add_event_cb(scene, scenarioEventCb, LV_EVENT_CLICKED, this);");
     require_contains(source, "_temp_arc = lv_arc_create(comfort);");
     require_not_contains(source, "Battery");
     require_not_contains(source, "Route");
     require_not_contains(source, "_battery_bar");
     require_not_contains(source, "_route_bar");
     require_contains(source, "lv_obj_t *mic = lv_btn_create(assistant);");
-    require_contains(source, "lv_obj_add_event_cb(scene, scenarioEventCb, LV_EVENT_CLICKED, this);");
 
     if (source.find("const char *energy_names[]") != std::string::npos) {
         std::cerr << "Energy card should not be created in the control page\n";
